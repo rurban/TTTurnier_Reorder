@@ -2,7 +2,8 @@
 # Copyright 2026 Reini Urban
 # Licensed under GPL-3.0-or-later
 # To be used with the Anmeldung*.xls files from the TTTurnier software
-# for the first step of creating tournament groups.
+# for the first step of creating tournament groups. Can also read FODS files,
+# saved from LibreOffice Calc.
 # Written for the SVF Dresden, for the SEM-B and SEM-A tournaments in 2026.
 # There is another step later for the KO-stage. See TTTurnier_KO_Reorder.pl
 
@@ -14,11 +15,13 @@ use XML::LibXML;
 use File::Basename qw(dirname basename);
 use File::Spec;
 
-# Spreadsheet XML namespace
-my $NS = 'urn:schemas-microsoft-com:office:spreadsheet';
+# Supported input format namespaces
+my $NS_XLS   = 'urn:schemas-microsoft-com:office:spreadsheet';    # SpreadsheetML (.xls)
+my $NS_TABLE = 'urn:oasis:names:tc:opendocument:xmlns:table:1.0'; # ODF (.fods)
+my $NS_TEXT  = 'urn:oasis:names:tc:opendocument:xmlns:text:1.0';
 
 # ---------------------------------------------------------------------------
-# Locate input XLS file
+# Locate input file (.fods preferred, fallback to .xls)
 # ---------------------------------------------------------------------------
 my ($xls_file, $out_file);
 
@@ -28,13 +31,16 @@ if (@ARGV) {
 }
 
 unless ($xls_file && -f $xls_file) {
-    # Auto-detect Anmeldung*.xls next to this script
+    # Auto-detect next to this script; prefer .fods over .xls
     my $dir = dirname(File::Spec->rel2abs($0));
-    my @cands = sort glob(File::Spec->catfile($dir, 'Anmeldung*.xls'));
+    my @cands = (
+        sort(glob(File::Spec->catfile($dir, 'Anmeldung*.fods'))),
+        sort(glob(File::Spec->catfile($dir, 'Anmeldung*.xls'))),
+    );
     $xls_file = $cands[0] if @cands;
 }
 
-die "Usage: $0 <Anmeldung.xls> [output.html]\n"
+die "Usage: $0 <Anmeldung.xls|Anmeldung.fods> [output.html]\n"
     unless $xls_file && -f $xls_file;
 
 # Default output: same directory, replace extension with _Gruppen.html
@@ -44,26 +50,48 @@ unless ($out_file) {
     $out_file = "${base}_Gruppen.html";
 }
 
+# Detect format by extension
+my $fmt = ($xls_file =~ /\.fods$/i) ? 'fods' : 'xls';
+
 # ---------------------------------------------------------------------------
-# Parse XML / SpreadsheetML
+# Parse XML
 # ---------------------------------------------------------------------------
 my $parser = XML::LibXML->new();
 my $doc    = $parser->parse_file($xls_file);
 my $root   = $doc->documentElement();
 my $xpc    = XML::LibXML::XPathContext->new($root);
-$xpc->registerNs('s', $NS);
 
-# Return array of cell values for a <s:Row>, respecting s:Index gaps
+if ($fmt eq 'xls') {
+    $xpc->registerNs('s',     $NS_XLS);
+} else {
+    $xpc->registerNs('table', $NS_TABLE);
+    $xpc->registerNs('text',  $NS_TEXT);
+}
+
+# Return array of cell values for one row, format-agnostic.
+# XLS:  respects s:Index for sparse cells.
+# FODS: expands table:number-columns-repeated; caps large trailing repeats.
 sub row_values {
     my ($row) = @_;
     my @out;
     my $cur = 0;
-    for my $cell ($xpc->findnodes('s:Cell', $row)) {
-        my $idx = $cell->getAttributeNS($NS, 'Index');
-        $cur = $idx - 1 if defined $idx && $idx ne '';
-        my ($data) = $xpc->findnodes('s:Data', $cell);
-        $out[$cur] = $data ? $data->textContent() : '';
-        $cur++;
+    if ($fmt eq 'xls') {
+        for my $cell ($xpc->findnodes('s:Cell', $row)) {
+            my $idx = $cell->getAttributeNS($NS_XLS, 'Index');
+            $cur = $idx - 1 if defined $idx && $idx ne '';
+            my ($data) = $xpc->findnodes('s:Data', $cell);
+            $out[$cur] = $data ? $data->textContent() : '';
+            $cur++;
+        }
+    } else {
+        for my $cell ($xpc->findnodes('table:table-cell', $row)) {
+            my $repeat = $cell->getAttributeNS($NS_TABLE, 'number-columns-repeated') // 1;
+            my ($tp)   = $xpc->findnodes('text:p', $cell);
+            my $val    = $tp ? $tp->textContent() : undef;
+            # Cap large repeats on empty cells (ODF trailing-column padding)
+            $repeat = 1 if !defined($val) && $repeat > 30;
+            for (1..$repeat) { $out[$cur++] = $val }
+        }
     }
     return @out;
 }
@@ -73,11 +101,19 @@ sub row_values {
 # ---------------------------------------------------------------------------
 my @categories;
 
-for my $ws ($xpc->findnodes('//s:Worksheet')) {
-    my $sheet = $ws->getAttributeNS($NS, 'Name');
+my @worksheets = ($fmt eq 'xls')
+    ? $xpc->findnodes('//s:Worksheet')
+    : $xpc->findnodes('//table:table');
+
+for my $ws (@worksheets) {
+    my $sheet = ($fmt eq 'xls')
+        ? $ws->getAttributeNS($NS_XLS,   'Name')
+        : $ws->getAttributeNS($NS_TABLE, 'name');
     next if $sheet eq 'Turnieranmeldungen';
 
-    my @rows = $xpc->findnodes('s:Table/s:Row', $ws);
+    my @rows = ($fmt eq 'xls')
+        ? $xpc->findnodes('s:Table/s:Row',   $ws)
+        : $xpc->findnodes('table:table-row', $ws);
     next if @rows < 4;   # need title + header + at least 2 data rows
 
     # Row 0: title string
@@ -340,23 +376,25 @@ TTTurnier_Reorder - Group draw generator for TTTurnier tournaments
 
 =head1 SYNOPSIS
 
-    perl TTTurnier_Reorder.pl [<Anmeldung.xls> [<output.html>]]
+    perl TTTurnier_Reorder.pl [<Anmeldung.xls|Anmeldung.fods> [<output.html>]]
 
-    # Auto-detect Anmeldung*.xls in the script directory, write next to it:
+    # Auto-detect Anmeldung*.fods (preferred) or *.xls in the script directory:
     perl TTTurnier_Reorder.pl
 
     # Explicit input, auto output (Anmeldung_92067_Gruppen.html):
     perl TTTurnier_Reorder.pl Anmeldung_92067.xls
+    perl TTTurnier_Reorder.pl Anmeldung_92067.fods
 
     # Explicit input and output:
-    perl TTTurnier_Reorder.pl Anmeldung_92067.xls Gruppen.html
+    perl TTTurnier_Reorder.pl Anmeldung_92067.fods Gruppen.html
 
     # On Windows (compiled with PAR::Packer):
-    TTTurnier_Reorder.exe Anmeldung_92067.xls
+    TTTurnier_Reorder.exe Anmeldung_92067.fods
 
 =head1 DESCRIPTION
 
-Reads a TTTurnier registration export in SpreadsheetML format (C<.xls>).
+Reads a TTTurnier registration export in SpreadsheetML format (C<.xls>) or
+ODF Flat Spreadsheet format (C<.fods>, as saved by LibreOffice Calc).
 The file contains one overview sheet (C<Turnieranmeldungen>) and one sheet
 per tournament category.  Each category sheet with more than 8 players is
 processed into groups.
