@@ -56,6 +56,9 @@ stayed in their originally seeded group are shown in black.
 The output file is written next to the input `.xls` file (or to
 `ARGV[1]` if supplied), with the suffix `_Gruppen.html`.
 
+See an example [Anmeldung_anon.html](https://rurban.github.io/TTTurnier_Reorder/Anmeldung_anon.html)
+for 60 players.
+
 # DEPENDENCIES
 
 [XML::LibXML](https://metacpan.org/pod/XML%3A%3ALibXML) (included in Strawberry Perl for Windows).

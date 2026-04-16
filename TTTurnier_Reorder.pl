@@ -476,6 +476,9 @@ The output file is written next to the script/executable (or to
 C<ARGV[1]> if supplied), using the input basename with a C<.html>
 extension.
 
+See an example L<https://rurban.github.io/TTTurnier_Reorder/Anmeldung_anon.html>
+for 60 players.
+
 =head1 DEPENDENCIES
 
 L<XML::LibXML> (included in Strawberry Perl for Windows).
