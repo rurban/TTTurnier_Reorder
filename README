@@ -1,0 +1,75 @@
+# NAME
+
+TTTurnier\_Reorder - Group draw generator for TTTurnier tournaments
+
+# SYNOPSIS
+
+    perl TTTurnier_Reorder.pl [<Anmeldung.xls> [<output.html>]]
+
+    # Auto-detect Anmeldung*.xls in the script directory, write next to it:
+    perl TTTurnier_Reorder.pl
+
+    # Explicit input, auto output (Anmeldung_92067_Gruppen.html):
+    perl TTTurnier_Reorder.pl Anmeldung_92067.xls
+
+    # Explicit input and output:
+    perl TTTurnier_Reorder.pl Anmeldung_92067.xls Gruppen.html
+
+    # On Windows (compiled with PAR::Packer):
+    TTTurnier_Reorder.exe Anmeldung_92067.xls
+
+# DESCRIPTION
+
+Reads a TTTurnier registration export in SpreadsheetML format (`.xls`).
+The file contains one overview sheet (`Turnieranmeldungen`) and one sheet
+per tournament category.  Each category sheet with more than 8 players is
+processed into groups.
+
+Written for the SVF Dresden, for the SEM-B and SEM-A tournaments in 2026.
+There is another step later for the KO-stage. See `TTTurnier_KO_Reorder.pl`
+
+## Algorithm
+
+- 1. **Sort** all players by LivePZ (rating) descending.
+- 2. **Determine group count** based on field size:
+
+        n <= 40  =>  8 groups  (max 4-5 players each)
+        n <= 64  => 16 groups  (max 4 players each)
+        larger   =>  next power-of-2 / 4 groups
+
+- 3. **Initial seeding** by round-robin:
+p1->G1, p2->G2, ..., pm->Gm, p(m+1)->G1, ...
+This keeps the LivePZ spread within each group as even as possible.
+- 4. **Re-arrange by Verein (club)**: iteratively swap players to
+ensure no two players from the same club share a group.  Each swap
+chooses the partner from another group that minimises the absolute
+LivePZ difference, so the overall rating balance is disturbed as little
+as possible.  If a club has more players than there are groups, some
+sharing is unavoidable and the remaining conflict is left in place.
+
+## Output
+
+A self-contained HTML file with one card per group.  Players who were
+moved during the re-arrangement step are coloured **red**; players who
+stayed in their originally seeded group are shown in black.
+
+The output file is written next to the input `.xls` file (or to
+`ARGV[1]` if supplied), with the suffix `_Gruppen.html`.
+
+# DEPENDENCIES
+
+[XML::LibXML](https://metacpan.org/pod/XML%3A%3ALibXML) (included in Strawberry Perl for Windows).
+
+To build a standalone Windows executable:
+
+    pp -o TTTurnier_Reorder.exe TTTurnier_Reorder.pl
+or
+    perl2exe TTTurnier_Reorder.pl
+
+# AUTHOR
+
+Reini Urban
+
+# LICENSE
+
+GPL-3.0-or-later
