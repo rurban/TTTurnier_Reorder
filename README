@@ -4,29 +4,49 @@ TTTurnier\_Reorder - Group draw generator for TTTurnier tournaments
 
 # SYNOPSIS
 
-    perl TTTurnier_Reorder.pl [<Anmeldung.xls> [<output.html>]]
+    perl TTTurnier_Reorder.pl [<Anmeldung.xls|Anmeldung.fods> [<output.html>]]
 
-    # Auto-detect Anmeldung*.xls in the script directory, write next to it:
+    # Auto-detect Anmeldung*.fods (preferred) or *.xls in the script directory:
     perl TTTurnier_Reorder.pl
 
-    # Explicit input, auto output (Anmeldung_92067_Gruppen.html):
+    # Explicit input, auto output next to script/exe (Anmeldung_92067.html):
     perl TTTurnier_Reorder.pl Anmeldung_92067.xls
+    perl TTTurnier_Reorder.pl Anmeldung_92067.fods
 
     # Explicit input and output:
-    perl TTTurnier_Reorder.pl Anmeldung_92067.xls Gruppen.html
+    perl TTTurnier_Reorder.pl Anmeldung_92067.fods Gruppen.html
 
-    # On Windows (compiled with PAR::Packer):
-    TTTurnier_Reorder.exe Anmeldung_92067.xls
+    # On Windows (compiled with PAR::Packer / pp), drag/drop onto the exe
+    # or pass the file on the command line:
+    TTTurnier_Reorder.exe Anmeldung_92067.fods
 
 # DESCRIPTION
 
-Reads a TTTurnier registration export in SpreadsheetML format (`.xls`).
+Reads a TTTurnier registration export in SpreadsheetML format (`.xls`) or
+ODF Flat Spreadsheet format (`.fods`, as saved by LibreOffice Calc).
 The file contains one overview sheet (`Turnieranmeldungen`) and one sheet
 per tournament category.  Each category sheet with more than 8 players is
 processed into groups.
 
 Written for the SVF Dresden, for the SEM-B and SEM-A tournaments in 2026.
 There is another step later for the KO-stage. See `TTTurnier_KO_Reorder.pl`
+
+Auf Deutsch: [https://forum.tt-news.de/showthread.php?p=3873975](https://forum.tt-news.de/showthread.php?p=3873975)
+
+Zuerst einmal fuer eine ordentliche Gruppeneinteilung mit den
+Umsetzungen nach der Vereinsregel.
+
+Als Eingabe braucht man die Anmeldung\_XXXXX.xls, die man sich im
+www.tt-turniercenter.de herunterlaedt, diese Datei dropped man auf das
+Script am Desktop (perl sollte installiert sein, ein .exe kommt
+spaeter), und dabei wird ein Anmeldung\_XXXXX.html generiert, wie im
+Bespiel [https://rurban.github.io/TTTurnier\_Reorder/Anmeldung\_anon.html](https://rurban.github.io/TTTurnier_Reorder/Anmeldung_anon.html) Die
+Anzahl und Groesse der Gruppen wird automatisch erstellt. Und dann das
+Ranking wie noch bei Henke. Und dann die Umsetzungen, damit moeglichst
+wenige Spieler herumgeschoben muessen.
+
+Alle roten Spieler sind die noetigen Umsetzungen nach der
+Vereinsregel. Die muss man dann in den TT Software herumschieben.
 
 ## Algorithm
 
@@ -53,10 +73,11 @@ A self-contained HTML file with one card per group.  Players who were
 moved during the re-arrangement step are coloured **red**; players who
 stayed in their originally seeded group are shown in black.
 
-The output file is written next to the input `.xls` file (or to
-`ARGV[1]` if supplied), with the suffix `_Gruppen.html`.
+The output file is written next to the script/executable (or to
+`ARGV[1]` if supplied), using the input basename with a `.html`
+extension.
 
-See an example [Anmeldung_anon.html](https://rurban.github.io/TTTurnier_Reorder/Anmeldung_anon.html)
+See an example [https://rurban.github.io/TTTurnier\_Reorder/Anmeldung\_anon.html](https://rurban.github.io/TTTurnier_Reorder/Anmeldung_anon.html)
 for 60 players.
 
 # DEPENDENCIES

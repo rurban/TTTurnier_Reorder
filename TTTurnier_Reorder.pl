@@ -441,6 +441,23 @@ processed into groups.
 Written for the SVF Dresden, for the SEM-B and SEM-A tournaments in 2026.
 There is another step later for the KO-stage. See F<TTTurnier_KO_Reorder.pl>
 
+Auf Deutsch: L<https://forum.tt-news.de/showthread.php?p=3873975>
+
+Zuerst einmal fuer eine ordentliche Gruppeneinteilung mit den
+Umsetzungen nach der Vereinsregel.
+
+Als Eingabe braucht man die Anmeldung_XXXXX.xls, die man sich im
+www.tt-turniercenter.de herunterlaedt, diese Datei dropped man auf das
+Script am Desktop (perl sollte installiert sein, ein .exe kommt
+spaeter), und dabei wird ein Anmeldung_XXXXX.html generiert, wie im
+Bespiel L<https://rurban.github.io/TTTurnier_Reorder/Anmeldung_anon.html> Die
+Anzahl und Groesse der Gruppen wird automatisch erstellt. Und dann das
+Ranking wie noch bei Henke. Und dann die Umsetzungen, damit moeglichst
+wenige Spieler herumgeschoben muessen.
+
+Alle roten Spieler sind die noetigen Umsetzungen nach der
+Vereinsregel. Die muss man dann in den TT Software herumschieben.
+
 =head2 Algorithm
 
 =over 4
