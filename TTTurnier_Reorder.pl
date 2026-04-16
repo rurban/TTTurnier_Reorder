@@ -11,9 +11,9 @@ use strict;
 use warnings;
 use utf8;
 use open ':std', ':encoding(UTF-8)';
-use XML::LibXML ();
+use XML::LibXML    ();
 use File::Basename qw( dirname );
-use File::Spec ();
+use File::Spec     ();
 
 # Supported input format namespaces
 my $NS_XLS
@@ -197,11 +197,24 @@ for my $cat (@categories) {
     my $n = scalar @players;
     my $m = num_groups($n);
 
-    # Initial seeding: round-robin by rank
-    # p[0]->g0, p[1]->g1, ..., p[m-1]->g(m-1), p[m]->g0, ...
-    my @groups;
-    for my $i ( 0 .. $#players ) {
-        push @{ $groups[ $i % $m ] }, { %{ $players[$i] }, orig_rank => $i };
+  # Initial seeding by rank bands, with smaller groups first.
+  # Example: n=60, m=16 => groups 0..3 get 3 players, groups 4..15 get 4.
+  # Players stay in their rank band (slot 1, slot 2, ...) to preserve seeding.
+    my $base_size   = int( $n / $m );
+    my $num_larger  = $n % $m;
+    my $num_smaller = $m - $num_larger;
+    my @group_sizes
+        = ( ($base_size) x $num_smaller, ( $base_size + 1 ) x $num_larger, );
+
+    my @groups   = map { [] } 0 .. $m - 1;
+    my $pi       = 0;
+    my $max_size = $base_size + ( $num_larger ? 1 : 0 );
+    for my $slot ( 0 .. $max_size - 1 ) {
+        for my $gi ( 0 .. $m - 1 ) {
+            next if $slot >= $group_sizes[$gi];
+            push @{ $groups[$gi] },
+                { %{ $players[ $pi++ ] }, orig_rank => $pi - 1 };
+        }
     }
 
     # -------------------------------------------------------------------
@@ -345,9 +358,11 @@ for my $cat (@categories) {
     print $fh '<h1>', esc( $cat->{title} ), "</h1>\n";
     printf $fh "<p class=\"meta\">%d Spieler &bull; %d Gruppen%s</p>\n",
         $n, $m,
-        ( $moved_n
+        (
+        $moved_n
         ? " &bull; <span class=\"red\">$moved_n umgesetzt</span>"
-        : '' );
+        : ''
+        );
 
     print $fh "<div class=\"wrap\">\n";
 
