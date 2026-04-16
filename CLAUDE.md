@@ -49,4 +49,3 @@ Color the re-arranged players red, the kept players black.
 
 
 Do that in a programming language, usable on windows with a single executable. To be developed and tested on linux. For perl that would be perl2exe with perl-5.30.1 (https://www.indigostar.com/download/perl2exe-30.10-win.zip). For python `pyinstaller --onefile TTTurnier_Reorder.py`
-

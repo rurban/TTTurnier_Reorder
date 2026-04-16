@@ -11,31 +11,34 @@ use strict;
 use warnings;
 use utf8;
 use open ':std', ':encoding(UTF-8)';
-use XML::LibXML;
-use File::Basename qw(dirname basename);
-use File::Spec;
+use XML::LibXML ();
+use File::Basename qw( dirname );
+use File::Spec ();
 
 # Supported input format namespaces
-my $NS_XLS   = 'urn:schemas-microsoft-com:office:spreadsheet';    # SpreadsheetML (.xls)
-my $NS_TABLE = 'urn:oasis:names:tc:opendocument:xmlns:table:1.0'; # ODF (.fods)
-my $NS_TEXT  = 'urn:oasis:names:tc:opendocument:xmlns:text:1.0';
+my $NS_XLS
+    = 'urn:schemas-microsoft-com:office:spreadsheet';   # SpreadsheetML (.xls)
+my $NS_TABLE
+    = 'urn:oasis:names:tc:opendocument:xmlns:table:1.0';    # ODF (.fods)
+my $NS_TEXT = 'urn:oasis:names:tc:opendocument:xmlns:text:1.0';
 
 # ---------------------------------------------------------------------------
 # Locate input file (.fods preferred, fallback to .xls)
 # ---------------------------------------------------------------------------
-my ($xls_file, $out_file);
+my ( $xls_file, $out_file );
 
 if (@ARGV) {
     $xls_file = $ARGV[0];
-    $out_file  = $ARGV[1] if $ARGV[1];
+    $out_file = $ARGV[1] if $ARGV[1];
 }
 
-unless ($xls_file && -f $xls_file) {
+unless ( $xls_file && -f $xls_file ) {
+
     # Auto-detect next to this script; prefer .fods over .xls
-    my $dir = dirname(File::Spec->rel2abs($0));
+    my $dir   = dirname( File::Spec->rel2abs($0) );
     my @cands = (
-        sort(glob(File::Spec->catfile($dir, 'Anmeldung*.fods'))),
-        sort(glob(File::Spec->catfile($dir, 'Anmeldung*.xls'))),
+        sort( glob( File::Spec->catfile( $dir, 'Anmeldung*.fods' ) ) ),
+        sort( glob( File::Spec->catfile( $dir, 'Anmeldung*.xls' ) ) ),
     );
     $xls_file = $cands[0] if @cands;
 }
@@ -51,7 +54,7 @@ unless ($out_file) {
 }
 
 # Detect format by extension
-my $fmt = ($xls_file =~ /\.fods$/i) ? 'fods' : 'xls';
+my $fmt = ( $xls_file =~ /\.fods$/i ) ? 'fods' : 'xls';
 
 # ---------------------------------------------------------------------------
 # Parse XML
@@ -61,11 +64,12 @@ my $doc    = $parser->parse_file($xls_file);
 my $root   = $doc->documentElement();
 my $xpc    = XML::LibXML::XPathContext->new($root);
 
-if ($fmt eq 'xls') {
-    $xpc->registerNs('s',     $NS_XLS);
-} else {
-    $xpc->registerNs('table', $NS_TABLE);
-    $xpc->registerNs('text',  $NS_TEXT);
+if ( $fmt eq 'xls' ) {
+    $xpc->registerNs( 's', $NS_XLS );
+}
+else {
+    $xpc->registerNs( 'table', $NS_TABLE );
+    $xpc->registerNs( 'text',  $NS_TEXT );
 }
 
 # Return array of cell values for one row, format-agnostic.
@@ -75,22 +79,25 @@ sub row_values {
     my ($row) = @_;
     my @out;
     my $cur = 0;
-    if ($fmt eq 'xls') {
-        for my $cell ($xpc->findnodes('s:Cell', $row)) {
-            my $idx = $cell->getAttributeNS($NS_XLS, 'Index');
+    if ( $fmt eq 'xls' ) {
+        for my $cell ( $xpc->findnodes( 's:Cell', $row ) ) {
+            my $idx = $cell->getAttributeNS( $NS_XLS, 'Index' );
             $cur = $idx - 1 if defined $idx && $idx ne '';
-            my ($data) = $xpc->findnodes('s:Data', $cell);
+            my ($data) = $xpc->findnodes( 's:Data', $cell );
             $out[$cur] = $data ? $data->textContent() : '';
             $cur++;
         }
-    } else {
-        for my $cell ($xpc->findnodes('table:table-cell', $row)) {
-            my $repeat = $cell->getAttributeNS($NS_TABLE, 'number-columns-repeated') // 1;
-            my ($tp)   = $xpc->findnodes('text:p', $cell);
-            my $val    = $tp ? $tp->textContent() : undef;
+    }
+    else {
+        for my $cell ( $xpc->findnodes( 'table:table-cell', $row ) ) {
+            my $repeat = $cell->getAttributeNS( $NS_TABLE,
+                'number-columns-repeated' ) // 1;
+            my ($tp) = $xpc->findnodes( 'text:p', $cell );
+            my $val = $tp ? $tp->textContent() : undef;
+
             # Cap large repeats on empty cells (ODF trailing-column padding)
             $repeat = 1 if !defined($val) && $repeat > 30;
-            for (1..$repeat) { $out[$cur++] = $val }
+            for ( 1 .. $repeat ) { $out[ $cur++ ] = $val }
         }
     }
     return @out;
@@ -101,56 +108,61 @@ sub row_values {
 # ---------------------------------------------------------------------------
 my @categories;
 
-my @worksheets = ($fmt eq 'xls')
+my @worksheets
+    = ( $fmt eq 'xls' )
     ? $xpc->findnodes('//s:Worksheet')
     : $xpc->findnodes('//table:table');
 
 for my $ws (@worksheets) {
-    my $sheet = ($fmt eq 'xls')
-        ? $ws->getAttributeNS($NS_XLS,   'Name')
-        : $ws->getAttributeNS($NS_TABLE, 'name');
+    my $sheet
+        = ( $fmt eq 'xls' )
+        ? $ws->getAttributeNS( $NS_XLS,   'Name' )
+        : $ws->getAttributeNS( $NS_TABLE, 'name' );
     next if $sheet eq 'Turnieranmeldungen';
 
-    my @rows = ($fmt eq 'xls')
-        ? $xpc->findnodes('s:Table/s:Row',   $ws)
-        : $xpc->findnodes('table:table-row', $ws);
-    next if @rows < 4;   # need title + header + at least 2 data rows
+    my @rows
+        = ( $fmt eq 'xls' )
+        ? $xpc->findnodes( 's:Table/s:Row',   $ws )
+        : $xpc->findnodes( 'table:table-row', $ws );
+    next if @rows < 4;    # need title + header + at least 2 data rows
 
     # Row 0: title string
-    my @t = row_values($rows[0]);
+    my @t     = row_values( $rows[0] );
     my $title = $t[0] // $sheet;
 
     # Row 1: column headers
-    my @hdrs = row_values($rows[1]);
+    my @hdrs = row_values( $rows[1] );
     my %col;
-    $col{$hdrs[$_]} = $_ for grep { defined $hdrs[$_] } 0..$#hdrs;
+    $col{ $hdrs[$_] } = $_ for grep { defined $hdrs[$_] } 0 .. $#hdrs;
 
-    my $ci_name   = $col{Nachname}  // 0;
-    my $ci_vname  = $col{Vorname}   // 1;
-    my $ci_verein = $col{Verein}    // 4;
-    my $ci_pz     = $col{LivePZ}    // 10;
+    my $ci_name   = $col{Nachname} // 0;
+    my $ci_vname  = $col{Vorname}  // 1;
+    my $ci_verein = $col{Verein}   // 4;
+    my $ci_pz     = $col{LivePZ}   // 10;
 
     # Rows 2+: players
     my @players;
-    for my $i (2..$#rows) {
-        my @v = row_values($rows[$i]);
+    for my $i ( 2 .. $#rows ) {
+        my @v  = row_values( $rows[$i] );
         my $pz = $v[$ci_pz] // 0;
         $pz =~ s/[^\d]//g;
-        push @players, {
+        push @players,
+            {
             nachname => $v[$ci_name]   // '',
             vorname  => $v[$ci_vname]  // '',
             verein   => $v[$ci_verein] // '',
             livepz   => $pz + 0,
-        };
+            };
     }
 
     next if @players <= 8;
 
-    push @categories, {
+    push @categories,
+        {
         name    => $sheet,
         title   => $title,
         players => \@players,
-    };
+        };
 }
 
 die "No tournament categories with more than 8 players found.\n"
@@ -168,6 +180,7 @@ sub num_groups {
     my ($n) = @_;
     return 8  if $n <= 40;
     return 16 if $n <= 64;
+
     # Extend for larger fields: next power-of-2 / 4
     my $ko = 1;
     $ko *= 2 while $ko < $n;
@@ -175,7 +188,7 @@ sub num_groups {
 }
 
 for my $cat (@categories) {
-    my @players = @{$cat->{players}};
+    my @players = @{ $cat->{players} };
 
     # Sort by LivePZ descending
     @players = sort { $b->{livepz} <=> $a->{livepz} } @players;
@@ -187,8 +200,8 @@ for my $cat (@categories) {
     # Initial seeding: round-robin by rank
     # p[0]->g0, p[1]->g1, ..., p[m-1]->g(m-1), p[m]->g0, ...
     my @groups;
-    for my $i (0..$#players) {
-        push @{$groups[$i % $m]}, { %{$players[$i]}, orig_rank => $i };
+    for my $i ( 0 .. $#players ) {
+        push @{ $groups[ $i % $m ] }, { %{ $players[$i] }, orig_rank => $i };
     }
 
     # -------------------------------------------------------------------
@@ -197,53 +210,57 @@ for my $cat (@categories) {
     # We allow a conflict to remain if no valid swap exists (i.e. more
     # than m players from a single Verein).
     # -------------------------------------------------------------------
-    my $changed = 1;
-    my $iters   = 0;
-    my $max_iters = $m * $n + 10;   # generous upper bound
+    my $changed   = 1;
+    my $iters     = 0;
+    my $max_iters = $m * $n + 10;    # generous upper bound
 
-    while ($changed && $iters++ < $max_iters) {
+    while ( $changed && $iters++ < $max_iters ) {
         $changed = 0;
 
-        for my $gi (0..$m-1) {
+        for my $gi ( 0 .. $m - 1 ) {
+
             # Count Verein occurrences in this group
             my %vc;
-            $vc{$_->{verein}}++ for @{$groups[$gi]};
+            $vc{ $_->{verein} }++ for @{ $groups[$gi] };
 
-            for my $verein (sort keys %vc) {
+            for my $verein ( sort keys %vc ) {
                 next if $vc{$verein} < 2;
 
                 # Player to move: last (weakest) duplicate in the group
-                my ($move_pi) = reverse grep {
-                    $groups[$gi][$_]{verein} eq $verein
-                } 0..$#{$groups[$gi]};
+                my ($move_pi)
+                    = reverse grep { $groups[$gi][$_]{verein} eq $verein }
+                    0 .. $#{ $groups[$gi] };
                 my $mp = $groups[$gi][$move_pi];
 
-                my ($best_gj, $best_pj, $best_cost) = (-1, -1, 1e18);
+                my ( $best_gj, $best_pj, $best_cost ) = ( -1, -1, 1e18 );
 
-                for my $gj (0..$m-1) {
+                for my $gj ( 0 .. $m - 1 ) {
                     next if $gj == $gi;
 
-                    for my $pj (0..$#{$groups[$gj]}) {
+                    for my $pj ( 0 .. $#{ $groups[$gj] } ) {
                         my $cp = $groups[$gj][$pj];
-                        next if $cp->{verein} eq $verein; # keeps conflict in gi
+                        next
+                            if $cp->{verein} eq
+                            $verein;    # keeps conflict in gi
 
-                        # Simulate swap and check both groups for new conflicts
+                       # Simulate swap and check both groups for new conflicts
                         my %v_gi;
-                        for my $k (0..$#{$groups[$gi]}) {
-                            my $p = ($k == $move_pi) ? $cp : $groups[$gi][$k];
-                            $v_gi{$p->{verein}}++;
+                        for my $k ( 0 .. $#{ $groups[$gi] } ) {
+                            my $p
+                                = ( $k == $move_pi ) ? $cp : $groups[$gi][$k];
+                            $v_gi{ $p->{verein} }++;
                         }
-                        next if ($v_gi{$cp->{verein}} // 0) > 1;
+                        next if ( $v_gi{ $cp->{verein} } // 0 ) > 1;
 
                         my %v_gj;
-                        for my $k (0..$#{$groups[$gj]}) {
-                            my $p = ($k == $pj) ? $mp : $groups[$gj][$k];
-                            $v_gj{$p->{verein}}++;
+                        for my $k ( 0 .. $#{ $groups[$gj] } ) {
+                            my $p = ( $k == $pj ) ? $mp : $groups[$gj][$k];
+                            $v_gj{ $p->{verein} }++;
                         }
-                        next if ($v_gj{$mp->{verein}} // 0) > 1;
+                        next if ( $v_gj{ $mp->{verein} } // 0 ) > 1;
 
-                        my $cost = abs($mp->{livepz} - $cp->{livepz});
-                        if ($cost < $best_cost) {
+                        my $cost = abs( $mp->{livepz} - $cp->{livepz} );
+                        if ( $cost < $best_cost ) {
                             $best_cost = $cost;
                             $best_gj   = $gj;
                             $best_pj   = $pj;
@@ -251,9 +268,12 @@ for my $cat (@categories) {
                     }
                 }
 
-                if ($best_gj >= 0) {
-                    ( $groups[$gi][$move_pi], $groups[$best_gj][$best_pj] ) =
-                    ( $groups[$best_gj][$best_pj], $groups[$gi][$move_pi] );
+                if ( $best_gj >= 0 ) {
+                    ( $groups[$gi][$move_pi], $groups[$best_gj][$best_pj] )
+                        = (
+                        $groups[$best_gj][$best_pj],
+                        $groups[$gi][$move_pi]
+                        );
                     $changed = 1;
                 }
             }
@@ -261,9 +281,9 @@ for my $cat (@categories) {
     }
 
     # Mark moved players (final group != originally seeded group)
-    for my $gi (0..$m-1) {
-        for my $p (@{$groups[$gi]}) {
-            $p->{moved} = ( ($p->{orig_rank} % $m) != $gi ) ? 1 : 0;
+    for my $gi ( 0 .. $m - 1 ) {
+        for my $p ( @{ $groups[$gi] } ) {
+            $p->{moved} = ( ( $p->{orig_rank} % $m ) != $gi ) ? 1 : 0;
         }
     }
 
@@ -274,7 +294,7 @@ for my $cat (@categories) {
 # ---------------------------------------------------------------------------
 # HTML output
 # ---------------------------------------------------------------------------
-open(my $fh, '>:encoding(UTF-8)', $out_file)
+open( my $fh, '>:encoding(UTF-8)', $out_file )
     or die "Cannot write '$out_file': $!\n";
 
 sub esc {
@@ -314,40 +334,43 @@ print $fh <<'HTML';
 HTML
 
 for my $cat (@categories) {
-    my @groups  = @{$cat->{groups}};
+    my @groups  = @{ $cat->{groups} };
     my $m       = $cat->{m};
-    my $n       = scalar @{$cat->{players}};
+    my $n       = scalar @{ $cat->{players} };
     my $moved_n = 0;
-    for my $gi (0..$#groups) {
-        $moved_n += grep { $_->{moved} } @{$groups[$gi]};
+    for my $gi ( 0 .. $#groups ) {
+        $moved_n += grep { $_->{moved} } @{ $groups[$gi] };
     }
 
-    print $fh '<h1>', esc($cat->{title}), "</h1>\n";
+    print $fh '<h1>', esc( $cat->{title} ), "</h1>\n";
     printf $fh "<p class=\"meta\">%d Spieler &bull; %d Gruppen%s</p>\n",
         $n, $m,
-        ($moved_n ? " &bull; <span class=\"red\">$moved_n umgesetzt</span>" : '');
+        ( $moved_n
+        ? " &bull; <span class=\"red\">$moved_n umgesetzt</span>"
+        : '' );
 
     print $fh "<div class=\"wrap\">\n";
 
-    for my $gi (0..$#groups) {
-        # Sort within group by LivePZ descending for display
-        my @grp = sort { $b->{livepz} <=> $a->{livepz} } @{$groups[$gi]};
+    for my $gi ( 0 .. $#groups ) {
 
-        printf $fh "<div class=\"grp\"><div class=\"ghdr\">Gruppe %d</div>\n", $gi + 1;
+        # Sort within group by LivePZ descending for display
+        my @grp = sort { $b->{livepz} <=> $a->{livepz} } @{ $groups[$gi] };
+
+        printf $fh "<div class=\"grp\"><div class=\"ghdr\">Gruppe %d</div>\n",
+            $gi + 1;
         print $fh "<table>\n";
 
         my $rank = 1;
         for my $p (@grp) {
             my $cls = $p->{moved} ? 'red' : 'blk';
-            printf $fh
-                "<tr><td class=\"nr\">%d</td>"
+            printf $fh "<tr><td class=\"nr\">%d</td>"
                 . "<td class=\"%s\">%s</td>"
                 . "<td class=\"%s\">%s</td>"
                 . "<td class=\"pz %s\">%s</td></tr>\n",
                 $rank++,
                 $cls, esc("$p->{nachname}, $p->{vorname}"),
-                $cls, esc($p->{verein}),
-                $cls, ($p->{livepz} || '');
+                $cls, esc( $p->{verein} ),
+                $cls, ( $p->{livepz} || '' );
         }
 
         print $fh "</table></div>\n";
@@ -359,13 +382,13 @@ for my $cat (@categories) {
 print $fh "</body>\n</html>\n";
 close $fh;
 
-printf "Written: %s\n", $out_file;
+printf "Written: %s\n",              $out_file;
 printf "Categories processed: %d\n", scalar @categories;
 for my $cat (@categories) {
     my $moved = 0;
-    $moved += grep { $_->{moved} } @$_ for @{$cat->{groups}};
+    $moved += grep { $_->{moved} } @$_ for @{ $cat->{groups} };
     printf "  %-30s  %2d players  %2d groups  %d moved\n",
-        $cat->{name}, scalar(@{$cat->{players}}), $cat->{m}, $moved;
+        $cat->{name}, scalar( @{ $cat->{players} } ), $cat->{m}, $moved;
 }
 
 __END__
