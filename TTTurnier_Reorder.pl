@@ -12,7 +12,7 @@ use warnings;
 use utf8;
 use open ':std', ':encoding(UTF-8)';
 use XML::LibXML    ();
-use File::Basename qw( dirname );
+use File::Basename qw( dirname fileparse );
 use File::Spec     ();
 
 # Supported input format namespaces
@@ -26,6 +26,7 @@ my $NS_TEXT = 'urn:oasis:names:tc:opendocument:xmlns:text:1.0';
 # Locate input file (.fods preferred, fallback to .xls)
 # ---------------------------------------------------------------------------
 my ( $xls_file, $out_file );
+my $exe_dir = dirname( File::Spec->rel2abs($0) );
 
 if (@ARGV) {
     $xls_file = $ARGV[0];
@@ -34,8 +35,8 @@ if (@ARGV) {
 
 unless ( $xls_file && -f $xls_file ) {
 
-    # Auto-detect next to this script; prefer .fods over .xls
-    my $dir   = dirname( File::Spec->rel2abs($0) );
+    # Auto-detect next to this script/executable; prefer .fods over .xls
+    my $dir   = $exe_dir;
     my @cands = (
         sort( glob( File::Spec->catfile( $dir, 'Anmeldung*.fods' ) ) ),
         sort( glob( File::Spec->catfile( $dir, 'Anmeldung*.xls' ) ) ),
@@ -46,11 +47,10 @@ unless ( $xls_file && -f $xls_file ) {
 die "Usage: $0 <Anmeldung.xls|Anmeldung.fods> [output.html]\n"
     unless $xls_file && -f $xls_file;
 
-# Default output: same directory, replace extension with _Gruppen.html
+# Default output: same directory as script/executable, replace extension with .html
 unless ($out_file) {
-    my $base = $xls_file;
-    $base =~ s/\.[^.\\\/]+$//;
-    $out_file = "${base}_Gruppen.html";
+    my ($name) = fileparse( $xls_file, qr/\.[^.]+/ );
+    $out_file = File::Spec->catfile( $exe_dir, "${name}.html" );
 }
 
 # Detect format by extension
@@ -419,14 +419,15 @@ TTTurnier_Reorder - Group draw generator for TTTurnier tournaments
     # Auto-detect Anmeldung*.fods (preferred) or *.xls in the script directory:
     perl TTTurnier_Reorder.pl
 
-    # Explicit input, auto output (Anmeldung_92067_Gruppen.html):
+    # Explicit input, auto output next to script/exe (Anmeldung_92067.html):
     perl TTTurnier_Reorder.pl Anmeldung_92067.xls
     perl TTTurnier_Reorder.pl Anmeldung_92067.fods
 
     # Explicit input and output:
     perl TTTurnier_Reorder.pl Anmeldung_92067.fods Gruppen.html
 
-    # On Windows (compiled with PAR::Packer):
+    # On Windows (compiled with PAR::Packer / pp), drag/drop onto the exe
+    # or pass the file on the command line:
     TTTurnier_Reorder.exe Anmeldung_92067.fods
 
 =head1 DESCRIPTION
@@ -471,8 +472,9 @@ A self-contained HTML file with one card per group.  Players who were
 moved during the re-arrangement step are coloured B<red>; players who
 stayed in their originally seeded group are shown in black.
 
-The output file is written next to the input C<.xls> file (or to
-C<ARGV[1]> if supplied), with the suffix C<_Gruppen.html>.
+The output file is written next to the script/executable (or to
+C<ARGV[1]> if supplied), using the input basename with a C<.html>
+extension.
 
 =head1 DEPENDENCIES
 
