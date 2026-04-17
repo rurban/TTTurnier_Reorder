@@ -422,6 +422,7 @@ TTTurnier_Reorder - Group draw generator for TTTurnier tournaments
     # Explicit input, auto output next to script/exe (Anmeldung_92067.html):
     perl TTTurnier_Reorder.pl Anmeldung_92067.xls
     perl TTTurnier_Reorder.pl Anmeldung_92067.fods
+    perl TTTurnier_Reorder.pl Anmeldung_92067.xml
 
     # Explicit input and output:
     perl TTTurnier_Reorder.pl Anmeldung_92067.fods Gruppen.html
@@ -434,6 +435,7 @@ TTTurnier_Reorder - Group draw generator for TTTurnier tournaments
 
 Reads a TTTurnier registration export in SpreadsheetML format (C<.xls>) or
 ODF Flat Spreadsheet format (C<.fods>, as saved by LibreOffice Calc).
+It also understands the XML file in Excel saved as XML-Kalkulationstabelle 2003.
 The file contains one overview sheet (C<Turnieranmeldungen>) and one sheet
 per tournament category.  Each category sheet with more than 8 players is
 processed into groups.
@@ -450,10 +452,19 @@ Als Eingabe braucht man die Anmeldung_XXXXX.xls, die man sich im
 www.tt-turniercenter.de herunterlaedt, diese Datei dropped man auf das
 Script am Desktop (perl sollte installiert sein, ein .exe kommt
 spaeter), und dabei wird ein Anmeldung_XXXXX.html generiert, wie im
-Bespiel L<https://rurban.github.io/TTTurnier_Reorder/Anmeldung_anon.html> Die
-Anzahl und Groesse der Gruppen wird automatisch erstellt. Und dann das
-Ranking wie noch bei Henke. Und dann die Umsetzungen, damit moeglichst
-wenige Spieler herumgeschoben muessen.
+Bespiel L<https://rurban.github.io/TTTurnier_Reorder/Anmeldung_anon.html>
+
+Wenn man die Anmeldungen aendern, muss weil jemand nicht erschienen
+ist, kann das .xls in B<Excel> oder B<LibreOffice Calc> oeffnen, in der
+Gruppe diejenigen Zeilen loeschen, und im Excel als
+XML-Kalkulationstabelle 2003 speichern, oder in LibreOffice Calc als
+ODF Flat Spreadsheet (.fods) speichern.
+Und dann C<TTTurnier_Reorder.pl> damit oeffnen.
+
+Die Anzahl und Groesse der Gruppen wird automatisch erstellt.
+Und dann das initiale Ranking wie noch bei Henke.
+Und dann die Umsetzungen in Rot, damit moeglichst wenige Spieler
+herumgeschoben muessen.
 
 Alle roten Spieler sind die noetigen Umsetzungen nach der
 Vereinsregel. Die muss man dann in den TT Software herumschieben.
