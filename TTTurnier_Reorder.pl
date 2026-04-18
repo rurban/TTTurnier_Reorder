@@ -481,16 +481,22 @@ Vereinsregel. Die muss man dann in den TT Software herumschieben.
     n <= 64  => 16 groups  (max 4 players each)
     larger   =>  next power-of-2 / 4 groups
 
+TODO: For Rangliste make bigger groups so that each player
+plays 6-8 times. There are only 1-2 groups, no KO-stage.
+
 =item 3. B<Initial seeding> by round-robin:
+
 p1->G1, p2->G2, ..., pm->Gm, p(m+1)->G1, ...
 This keeps the LivePZ spread within each group as even as possible.
 
-=item 4. B<Re-arrange by Verein (club)>: iteratively swap players to
-ensure no two players from the same club share a group.  Each swap
-chooses the partner from another group that minimises the absolute
-LivePZ difference, so the overall rating balance is disturbed as little
-as possible.  If a club has more players than there are groups, some
-sharing is unavoidable and the remaining conflict is left in place.
+=item 4. B<Re-arrange by Verein (club)>:
+
+iteratively swap players to ensure no two players from the same club
+share a group. Each swap chooses the partner from another group that
+minimises the absolute LivePZ difference, so the overall rating
+balance is disturbed as little as possible. If a club has more players
+than there are groups, some sharing is unavoidable and the remaining
+conflict is left in place.
 
 =back
 

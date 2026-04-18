@@ -12,6 +12,7 @@ TTTurnier\_Reorder - Group draw generator for TTTurnier tournaments
     # Explicit input, auto output next to script/exe (Anmeldung_92067.html):
     perl TTTurnier_Reorder.pl Anmeldung_92067.xls
     perl TTTurnier_Reorder.pl Anmeldung_92067.fods
+    perl TTTurnier_Reorder.pl Anmeldung_92067.xml
 
     # Explicit input and output:
     perl TTTurnier_Reorder.pl Anmeldung_92067.fods Gruppen.html
@@ -24,6 +25,7 @@ TTTurnier\_Reorder - Group draw generator for TTTurnier tournaments
 
 Reads a TTTurnier registration export in SpreadsheetML format (`.xls`) or
 ODF Flat Spreadsheet format (`.fods`, as saved by LibreOffice Calc).
+It also understands the XML file in Excel saved as XML-Kalkulationstabelle 2003.
 The file contains one overview sheet (`Turnieranmeldungen`) and one sheet
 per tournament category.  Each category sheet with more than 8 players is
 processed into groups.
@@ -40,10 +42,19 @@ Als Eingabe braucht man die Anmeldung\_XXXXX.xls, die man sich im
 www.tt-turniercenter.de herunterlaedt, diese Datei dropped man auf das
 Script am Desktop (perl sollte installiert sein, ein .exe kommt
 spaeter), und dabei wird ein Anmeldung\_XXXXX.html generiert, wie im
-Bespiel [https://rurban.github.io/TTTurnier\_Reorder/Anmeldung\_anon.html](https://rurban.github.io/TTTurnier_Reorder/Anmeldung_anon.html) Die
-Anzahl und Groesse der Gruppen wird automatisch erstellt. Und dann das
-Ranking wie noch bei Henke. Und dann die Umsetzungen, damit moeglichst
-wenige Spieler herumgeschoben muessen.
+Bespiel [https://rurban.github.io/TTTurnier\_Reorder/Anmeldung\_anon.html](https://rurban.github.io/TTTurnier_Reorder/Anmeldung_anon.html)
+
+Wenn man die Anmeldungen aendern, muss weil jemand nicht erschienen
+ist, kann das .xls in **Excel** oder **LibreOffice Calc** oeffnen, in der
+Gruppe diejenigen Zeilen loeschen, und im Excel als
+XML-Kalkulationstabelle 2003 speichern, oder in LibreOffice Calc als
+ODF Flat Spreadsheet (.fods) speichern.
+Und dann `TTTurnier_Reorder.pl` damit oeffnen.
+
+Die Anzahl und Groesse der Gruppen wird automatisch erstellt.
+Und dann das initiale Ranking wie noch bei Henke.
+Und dann die Umsetzungen in Rot, damit moeglichst wenige Spieler
+herumgeschoben muessen.
 
 Alle roten Spieler sind die noetigen Umsetzungen nach der
 Vereinsregel. Die muss man dann in den TT Software herumschieben.
@@ -57,15 +68,22 @@ Vereinsregel. Die muss man dann in den TT Software herumschieben.
         n <= 64  => 16 groups  (max 4 players each)
         larger   =>  next power-of-2 / 4 groups
 
+    TODO: For Rangliste make bigger groups so that each player
+    plays 6-8 times. There are only 1-2 groups, no KO-stage.
+
 - 3. **Initial seeding** by round-robin:
-p1->G1, p2->G2, ..., pm->Gm, p(m+1)->G1, ...
-This keeps the LivePZ spread within each group as even as possible.
-- 4. **Re-arrange by Verein (club)**: iteratively swap players to
-ensure no two players from the same club share a group.  Each swap
-chooses the partner from another group that minimises the absolute
-LivePZ difference, so the overall rating balance is disturbed as little
-as possible.  If a club has more players than there are groups, some
-sharing is unavoidable and the remaining conflict is left in place.
+
+    p1->G1, p2->G2, ..., pm->Gm, p(m+1)->G1, ...
+    This keeps the LivePZ spread within each group as even as possible.
+
+- 4. **Re-arrange by Verein (club)**:
+
+    iteratively swap players to ensure no two players from the same club
+    share a group. Each swap chooses the partner from another group that
+    minimises the absolute LivePZ difference, so the overall rating
+    balance is disturbed as little as possible. If a club has more players
+    than there are groups, some sharing is unavoidable and the remaining
+    conflict is left in place.
 
 ## Output
 
