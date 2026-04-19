@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
 TTTurnier_KO_Reorder - Reorder Phase 2 KO pairings for TTTurnier tournaments.
-Reads from .mdb database (via mdbtools), rearranges Round of 32, writes back.
+Reads from .mdb database (via mdbtools on Unix or pyodbc on Windows), rearranges Round of 32, writes back.
 
 Usage:
     python TTTurnier_KO_Reorder.py [-v] [-n] database.mdb
     python TTTurnier_KO_Reorder.py -v sem_b_2026.mdb   # verbose
     python TTTurnier_KO_Reorder.py -n sem_b_2026.mdb   # dry-run
 
-Requires: mdbtools (mdb-export, mdb-sql)
+Requires:
+    Unix: mdbtools (mdb-export, mdb-sql)
+    Windows: pyodbc (pip install pyodbc)
 """
 
 import csv
@@ -18,10 +20,50 @@ import os
 import shutil
 from pathlib import Path
 import argparse
+import platform
+
+# Windows-specific imports
+if platform.system() == "Windows":
+    try:
+        import pyodbc
+    except ImportError:
+        pyodbc = None
+
+
+def mdb_export_win(mdb_file, table):
+    """Export table from .mdb on Windows using pyodbc."""
+    try:
+        conn_str = (
+            r"Driver={Microsoft Access Driver (*.mdb, *.accdb)};"
+            f"DBQ={mdb_file};"
+        )
+        conn = pyodbc.connect(conn_str)
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT * FROM [{table}]")
+
+        # Get column names
+        columns = [column[0] for column in cursor.description]
+
+        # Fetch all rows
+        rows = []
+        for row in cursor.fetchall():
+            rows.append(
+                dict(zip(columns, [str(val) if val is not None else "" for val in row]))
+            )
+
+        cursor.close()
+        conn.close()
+        return rows
+    except Exception as e:
+        print(f"Error exporting {table} on Windows: {e}", file=sys.stderr)
+        return []
 
 
 def mdb_export(mdb_file, table):
-    """Export table from .mdb using mdbtools."""
+    """Export table from .mdb using mdbtools on Unix or pyodbc on Windows."""
+    if platform.system() == "Windows" and pyodbc:
+        return mdb_export_win(mdb_file, table)
+
     try:
         result = subprocess.run(
             ["mdb-export", mdb_file, table], capture_output=True, text=True, check=True
@@ -33,8 +75,34 @@ def mdb_export(mdb_file, table):
         return []
 
 
+def mdb_sql_win(mdb_file, sql):
+    """Execute SQL on .mdb on Windows using pyodbc."""
+    if platform.system() != "Windows" or not pyodbc:
+        return mdb_sql(mdb_file, sql)
+
+    try:
+        conn_str = (
+            r"Driver={Microsoft Access Driver (*.mdb, *.accdb)};"
+            f"DBQ={mdb_file};"
+        )
+        conn = pyodbc.connect(conn_str)
+        cursor = conn.cursor()
+        cursor.execute(sql)
+        conn.commit()
+        affected = cursor.rowcount
+        cursor.close()
+        conn.close()
+        return f"{affected} rows affected"
+    except Exception as e:
+        print(f"Error executing SQL on Windows: {e}", file=sys.stderr)
+        return ""
+
+
 def mdb_sql(mdb_file, sql):
-    """Execute SQL on .mdb using mdb-sql."""
+    """Execute SQL on .mdb using mdb-sql on Unix or pyodbc on Windows."""
+    if platform.system() == "Windows" and pyodbc:
+        return mdb_sql_win(mdb_file, sql)
+
     try:
         proc = subprocess.Popen(
             ["mdb-sql", "-p", mdb_file],
