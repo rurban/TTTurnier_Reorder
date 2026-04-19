@@ -339,10 +339,14 @@ def main():
         print("\nApplying updates...")
         for u in updates:
             sql = f"UPDATE tbl_Spiele SET tsp_refSpielerA_1='{u['new_a']}', tsp_refSpielerB_1='{u['new_b']}' WHERE tsp_ID={u['game_id']};\n"
-            result = mdb_sql(mdb_file, sql)
+            mdb_sql(mdb_file, sql)
             if verbose:
                 print(
-                    f"  Updated game {u['game_id']}: {u['old_a']}/{u['old_b']} -> {u['new_a']}/{u['new_b']}"
+                    f"Updated game {u['game_id']}: "
+                    f"A: {u['old_a']} -> {u['new_a']} "
+                    f"({u['old_a_name']} -> {u['new_a_name']}), "
+                    f"B: {u['old_b']} -> {u['new_b']} "
+                    f"({u['old_b_name']} -> {u['new_b_name']})"
                 )
 
         print("Done!")
