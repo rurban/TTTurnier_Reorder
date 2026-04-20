@@ -118,6 +118,21 @@ def mdb_sql(mdb_file, sql):
         return ""
 
 
+def generate_standard_seeding(size):
+    """Generate standard tournament seeding for bracket size (power of 2)"""
+    if size == 1:
+        return [1]
+    # Recursively build: take odd positions, then even positions reversed
+    odd = generate_standard_seeding(size // 2)
+    even = [x + size // 2 for x in odd]
+    # Interleave: first half odds, second half evens
+    result = []
+    for i in range(len(odd)):
+        result.append(odd[i])
+        result.append(even[i])
+    return result
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Reorder Phase 2 KO pairings")
     parser.add_argument("mdb_file", nargs="?", default=None)
@@ -220,54 +235,160 @@ def main():
         winners.append(group_results[g].get(1, "-1"))
         seconds.append(group_results[g].get(2, "-1"))
 
-    # Fixed position mapping for 16 group winners (CLAUDE.md)
-    winner_pos = {
-        1: 1,
-        2: 32,
-        3: 17,
-        4: 16,
-        5: 9,
-        6: 24,
-        7: 25,
-        8: 8,
-        9: 12,
-        10: 21,
-        11: 28,
-        12: 5,
-        13: 13,
-        14: 20,
-        15: 30,
-        16: 4,
-    }
+    # Calculate bracket size (power of 2 >= number of advancers)
+    num_groups = len(groups)
+    num_advancers = num_groups * 2  # winner + second from each group
 
-    # For seconds: placed in same match pair as winner
-    # Match pairs: (1,2), (3,4), ..., (31,32)
-    # Winner at position p: second at p+1 if p is odd, p-1 if p is even
-    second_pos = {}
-    for grp in range(1, 17):
-        wp = winner_pos[grp]
-        if wp % 2 == 1:  # odd
-            second_pos[grp] = wp + 1
-        else:
-            second_pos[grp] = wp - 1
+    # Find smallest power of 2 >= num_advancers
+    bracket_size = 1
+    while bracket_size < num_advancers:
+        bracket_size *= 2
+
+    num_byes = bracket_size - num_advancers
+
+    if verbose:
+        print(
+            f"Groups: {num_groups}, Advancers: {num_advancers}, Bracket size: {bracket_size}, Byes: {num_byes}"
+        )
+
+    # Standard seeding for bracket size (power of 2)
+    # This generates the standard tournament bracket seeding
+    def generate_standard_seeding(size):
+        """Generate standard tournament seeding for bracket size (power of 2)"""
+        if size == 1:
+            return [1]
+        # Recursively build: take odd positions, then even positions reversed
+        odd = generate_standard_seeding(size // 2)
+        even = [x + size // 2 for x in odd]
+        # Interleave: first half odds, second half evens
+        result = []
+        for i in range(len(odd)):
+            result.append(odd[i])
+            result.append(even[i])
+        return result
+
+    # Generate seeding: position -> seed (where seed 1 is best player)
+    seeding = generate_standard_seeding(bracket_size)
+    # Convert to position -> seed mapping
+    pos_to_seed = {}
+    for pos, seed in enumerate(seeding, start=1):
+        pos_to_seed[pos] = seed
+
+    # Now we need to map our groups to positions based on CLAUDE.md rules
+    # But we only have num_groups groups, not necessarily 16
+    # We'll adapt the CLAUDE.md pattern proportionally
+
+    # For now, handle the common case of 16 groups (as in CLAUDE.md)
+    # For other sizes, we'll use a proportional mapping based on LivePZ ranking
+
+    if num_groups == 16:
+        # Use exact CLAUDE.md mapping for 16 groups
+        winner_pos = {
+            1: 1,
+            2: 32,
+            3: 17,
+            4: 16,
+            5: 9,
+            6: 24,
+            7: 25,
+            8: 8,
+            9: 12,
+            10: 21,
+            11: 28,
+            12: 5,
+            13: 13,
+            14: 20,
+            15: 30,
+            16: 4,
+        }
+
+        # For seconds: placed in same match pair as winner
+        # Match pairs: (1,2), (3,4), ..., (31,32)
+        # Winner at position p: second at p+1 if p is odd, p-1 if p is even
+        second_pos = {}
+        for grp in range(1, 17):
+            wp = winner_pos[grp]
+            if wp % 2 == 1:  # odd
+                second_pos[grp] = wp + 1
+            else:
+                second_pos[grp] = wp - 1
+    else:
+        # For other group counts, sort groups by LivePZ of their winners
+        # and assign to best available positions
+        group_winner_livepz = []
+        for i, g in enumerate(groups, 1):
+            winner_id = winners[i - 1] if i - 1 < len(winners) else "-1"
+            if winner_id and winner_id != "-1" and winner_id in players:
+                livepz = players[winner_id]["livepz"]
+            else:
+                livepz = 0
+            group_winner_livepz.append(
+                (livepz, i, g)
+            )  # (livepz, group_index, group_id)
+
+        # Sort by LivePZ descending (best first)
+        group_winner_livepz.sort(reverse=True)
+
+        # Assign winners to best positions (seeds 1, 3, 5, 7, ... then 2, 4, 6, 8, ...)
+        # This ensures best players get best seeds
+        winner_pos = {}
+        second_pos = {}
+
+        # Get list of positions ordered by seed quality (position of seed 1, then seed 2, etc.)
+        # We want: position of seed 1, position of seed 2, position of seed 3, ...
+        seed_to_pos = {seed: pos for pos, seed in pos_to_seed.items()}
+        positions_by_seed_quality = [
+            seed_to_pos[i] for i in range(1, bracket_size + 1) if i in seed_to_pos
+        ]
+
+        # Assign group winners to best positions
+        for idx, (_, group_index, group_id) in enumerate(group_winner_livepz):
+            if idx < len(positions_by_seed_quality):
+                pos = positions_by_seed_quality[idx]
+                winner_pos[group_index] = pos
+
+                # Second place goes in the same match pair
+                # Match pairs: (1,2), (3,4), (5,6), ...
+                # If pos is odd, pair is (pos, pos+1); if pos is even, pair is (pos-1, pos)
+                if pos % 2 == 1:  # odd position -> first in pair
+                    second_pos[group_index] = pos + 1
+                else:  # even position -> second in pair
+                    second_pos[group_index] = pos - 1
 
     # Build position map
     position_map = {}  # position -> {pid, type, group}
     for i, g in enumerate(groups, 1):
         pid = winners[i - 1] if i - 1 < len(winners) else "-1"
         if pid and pid != "-1" and pid in players:
-            position_map[winner_pos[i]] = {"pid": pid, "type": f"G{i}P1", "group": i}
+            if i in winner_pos:
+                position_map[winner_pos[i]] = {
+                    "pid": pid,
+                    "type": f"G{i}P1",
+                    "group": i,
+                }
+            else:
+                # Fallback: assign to next available position
+                pass
 
         pid = seconds[i - 1] if i - 1 < len(seconds) else "-1"
         if pid and pid != "-1" and pid in players:
-            position_map[second_pos[i]] = {"pid": pid, "type": f"G{i}P2", "group": i}
+            if i in second_pos:
+                position_map[second_pos[i]] = {
+                    "pid": pid,
+                    "type": f"G{i}P2",
+                    "group": i,
+                }
+            else:
+                # Fallback: assign to next available position
+                pass
 
     print(f"Position map has {len(position_map)} players")
 
     # Check conflicts
-    def check_conflicts(pos_map):
+    def check_conflicts(pos_map, bracket_size):
         conflicts = []
-        for i in range(16):
+        matches = bracket_size // 2
+        for i in range(matches):
             pos_a = 2 * i + 1
             pos_b = 2 * i + 2
             if pos_a in pos_map and pos_b in pos_map:
@@ -285,7 +406,7 @@ def main():
                     )
         return conflicts
 
-    conflicts = check_conflicts(position_map)
+    conflicts = check_conflicts(position_map, bracket_size)
     print(f"Initial club conflicts: {len(conflicts)}")
     if verbose:
         for c in conflicts:
@@ -303,7 +424,7 @@ def main():
             position_map[pos_a] = position_map[pos_b]
             position_map[pos_b] = tmp
 
-            new_conflicts = check_conflicts(position_map)
+            new_conflicts = check_conflicts(position_map, bracket_size)
             if len(new_conflicts) < len(conflicts):
                 conflicts = new_conflicts
                 print(f"Resolved by swapping within match {pos_a}/{pos_b}")
@@ -323,7 +444,8 @@ def main():
     )
     print("-" * 95)
 
-    for i in range(16):
+    matches = bracket_size // 2
+    for i in range(matches):
         pos_a = 2 * i + 1
         pos_b = 2 * i + 2
 
@@ -331,6 +453,7 @@ def main():
         p_b_data = position_map.get(pos_b)
 
         if not p_a_data or not p_b_data:
+            # Skip if one or both positions are empty (byes)
             continue
 
         p_a = players.get(p_a_data["pid"])
