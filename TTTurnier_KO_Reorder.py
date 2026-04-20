@@ -32,6 +32,11 @@ if platform.system() == "Windows":
 
 def mdb_export_win(mdb_file, table):
     """Export table from .mdb on Windows using pyodbc."""
+    if not pyodbc:
+        # verbose is not available here, always print error for critical dependency
+        print("pyodbc not available on Windows", file=sys.stderr)
+        return []
+
     try:
         conn_str = (
             r"Driver={Microsoft Access Driver (*.mdb, *.accdb)};"
@@ -54,6 +59,42 @@ def mdb_export_win(mdb_file, table):
         cursor.close()
         conn.close()
         return rows
+    except pyodbc.Error as e:
+        print(
+            f"Error exporting {table} on Windows (pyodbc error): {e}", file=sys.stderr
+        )
+        return []
+    except Exception as e:
+        print(f"Error exporting {table} on Windows: {e}", file=sys.stderr)
+        return []
+
+    try:
+        conn_str = (
+            r"Driver={Microsoft Access Driver (*.mdb, *.accdb)};"
+            f"DBQ={mdb_file};"
+        )
+        conn = pyodbc.connect(conn_str)
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT * FROM [{table}]")
+
+        # Get column names
+        columns = [column[0] for column in cursor.description]
+
+        # Fetch all rows
+        rows = []
+        for row in cursor.fetchall():
+            rows.append(
+                dict(zip(columns, [str(val) if val is not None else "" for val in row]))
+            )
+
+        cursor.close()
+        conn.close()
+        return rows
+    except pyodbc.Error as e:
+        print(
+            f"Error exporting {table} on Windows (pyodbc error): {e}", file=sys.stderr
+        )
+        return []
     except Exception as e:
         print(f"Error exporting {table} on Windows: {e}", file=sys.stderr)
         return []
@@ -148,12 +189,18 @@ def main():
     if args.mdb_file:
         mdb_file = args.mdb_file
     else:
-        # Auto-detect
+        # Auto-detect: take the newest .mdb file in the mdb subdirectory
         exe_dir = Path(__file__).parent
-        mdb_files = list(exe_dir.glob("*.mdb"))
-        if not mdb_files:
-            print("No .mdb file found", file=sys.stderr)
+        mdb_dir = exe_dir / "mdb"
+        if not mdb_dir.is_dir():
+            print("No mdb directory found", file=sys.stderr)
             sys.exit(1)
+        mdb_files = list(mdb_dir.glob("*.mdb"))
+        if not mdb_files:
+            print("No .mdb file found in mdb directory", file=sys.stderr)
+            sys.exit(1)
+        # Sort by modification time, newest first
+        mdb_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         mdb_file = str(mdb_files[0])
 
     if not os.path.isfile(mdb_file):
