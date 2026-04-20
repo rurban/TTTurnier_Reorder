@@ -87,6 +87,11 @@ Verband tournament). In the WTTV the LivePZ, i.e. the initial grpup
 ranking, is more important than the actual group result. So G1P1 is from
 the initial ranking of the group, not the actual group winner.
 
+Place the winners in a balanced seeding algorithm.
+
+From top down, select the best at the top, the next at the bottom.
+Then half the bracket, next is bottom of the half, top of the half,
+
     1 => 1
     2 => 32
     3 => 17
@@ -96,6 +101,9 @@ the initial ranking of the group, not the actual group winner.
 ...
     15 => 30
     16 => 4
+
+Number of byes = M−N
+Given them to the top seeds.
 
 Now place 2nd places in the groups, such that:
 

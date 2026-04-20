@@ -398,82 +398,40 @@ def main():
     # But we only have num_groups groups, not necessarily 16
     # We'll adapt the CLAUDE.md pattern proportionally
 
-    # For now, handle the common case of 16 groups (as in CLAUDE.md)
-    # For other sizes, we'll use a proportional mapping based on LivePZ ranking
+    # Generate winner positions: alternate top/bottom halves (same as CLAUDE.md pattern)
+    # For 32: 1,32,17,16,9,24,25,8,12,21,28,5,13,20,30,4
+    n = num_groups * 2
+    winner_positions = []
+    top = list(range(1, n // 2 + 1))  # 1 to 16
+    bottom = list(range(n, n // 2, -1))  # 32 to 17 (reversed)
 
-    if num_groups == 16:
-        # Use exact CLAUDE.md mapping for 16 groups
-        winner_pos = {
-            1: 1,
-            2: 32,
-            3: 17,
-            4: 16,
-            5: 9,
-            6: 24,
-            7: 25,
-            8: 8,
-            9: 12,
-            10: 21,
-            11: 28,
-            12: 5,
-            13: 13,
-            14: 20,
-            15: 30,
-            16: 4,
-        }
+    # Interleave: 1,32,17,16,9,24,25,8,...
+    for i in range(len(top)):
+        winner_positions.append(top[i])
+        if i < len(bottom):
+            winner_positions.append(bottom[i])
+    winner_positions = winner_positions[:num_groups]
 
-        # For seconds: placed in same match pair as winner
-        # Match pairs: (1,2), (3,4), ..., (31,32)
-        # Winner at position p: second at p+1 if p is odd, p-1 if p is even
-        second_pos = {}
-        for grp in range(1, 17):
-            wp = winner_pos[grp]
-            if wp % 2 == 1:  # odd
-                second_pos[grp] = wp + 1
-            else:
-                second_pos[grp] = wp - 1
-    else:
-        # For other group counts, sort groups by LivePZ of their winners
-        # and assign to best available positions
-        group_winner_livepz = []
-        for i, g in enumerate(groups, 1):
-            winner_id = winners[i - 1] if i - 1 < len(winners) else "-1"
-            if winner_id and winner_id != "-1" and winner_id in players:
-                livepz = players[winner_id]["livepz"]
-            else:
-                livepz = 0
-            group_winner_livepz.append(
-                (livepz, i, g)
-            )  # (livepz, group_index, group_id)
+    # Generate second positions: in OTHER bracket half (NOT same match pair!)
+    # If winner in upper half (1-16), second in lower half (17-32) at same relative position
+    # If winner in lower half (17-32), second in upper half (1-16) at same relative position
+    # This ensures winner vs second from SAME GROUP never meet in Round 1
+    second_positions = []
+    for pos in winner_positions:
+        if pos <= n // 2:
+            # Upper half -> lower half at same relative position
+            second_positions.append(pos + n // 2)
+        else:
+            # Lower half -> upper half at same relative position
+            second_positions.append(pos - n // 2)
 
-        # Sort by LivePZ descending (best first)
-        group_winner_livepz.sort(reverse=True)
+    # Convert to dicts
+    winner_pos = {i + 1: pos for i, pos in enumerate(winner_positions)}
+    second_pos = {i + 1: pos for i, pos in enumerate(second_positions)}
 
-        # Assign winners to best positions (seeds 1, 3, 5, 7, ... then 2, 4, 6, 8, ...)
-        # This ensures best players get best seeds
-        winner_pos = {}
-        second_pos = {}
-
-        # Get list of positions ordered by seed quality (position of seed 1, then seed 2, etc.)
-        # We want: position of seed 1, position of seed 2, position of seed 3, ...
-        seed_to_pos = {seed: pos for pos, seed in pos_to_seed.items()}
-        positions_by_seed_quality = [
-            seed_to_pos[i] for i in range(1, bracket_size + 1) if i in seed_to_pos
-        ]
-
-        # Assign group winners to best positions
-        for idx, (_, group_index, group_id) in enumerate(group_winner_livepz):
-            if idx < len(positions_by_seed_quality):
-                pos = positions_by_seed_quality[idx]
-                winner_pos[group_index] = pos
-
-                # Second place goes in the same match pair
-                # Match pairs: (1,2), (3,4), (5,6), ...
-                # If pos is odd, pair is (pos, pos+1); if pos is even, pair is (pos-1, pos)
-                if pos % 2 == 1:  # odd position -> first in pair
-                    second_pos[group_index] = pos + 1
-                else:  # even position -> second in pair
-                    second_pos[group_index] = pos - 1
+    if verbose:
+        print(f"Winner positions: {[winner_pos[i] for i in range(1, num_groups + 1)]}")
+        print(f"Second positions: {[second_pos[i] for i in range(1, num_groups + 1)]}")
 
     # Build position map
     position_map = {}  # position -> {pid, type, group}
