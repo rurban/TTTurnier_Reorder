@@ -37,6 +37,56 @@ def mdb_export_win(mdb_file, table):
         print("pyodbc not available on Windows", file=sys.stderr)
         return []
 
+    # Ensure we have a proper string path
+    if not isinstance(mdb_file, str):
+        mdb_file = str(mdb_file)
+
+    # Handle potential path issues on Windows
+    try:
+        # Convert to absolute path to avoid any relative path issues
+        mdb_file = os.path.abspath(mdb_file)
+    except Exception:
+        pass  # If we can't make it absolute, use as-is
+
+    try:
+        conn_str = (
+            r"Driver={Microsoft Access Driver (*.mdb, *.accdb)};"
+            f"DBQ={mdb_file};"
+        )
+        conn = pyodbc.connect(conn_str)
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT * FROM [{table}]")
+
+        # Get column names
+        columns = [column[0] for column in cursor.description]
+
+        # Fetch all rows
+        rows = []
+        for row in cursor.fetchall():
+            rows.append(
+                dict(zip(columns, [str(val) if val is not None else "" for val in row]))
+            )
+
+        cursor.close()
+        conn.close()
+        return rows
+    except pyodbc.Error as e:
+        print(
+            f"Error exporting {table} on Windows (pyodbc error): {e}", file=sys.stderr
+        )
+        print(
+            f"  Connection string was: Driver={{Microsoft Access Driver (*.mdb, *.accdb)}};DBQ={mdb_file}",
+            file=sys.stderr,
+        )
+        return []
+    except Exception as e:
+        print(f"Error exporting {table} on Windows: {e}", file=sys.stderr)
+        print(
+            f"  Connection string was: Driver={{Microsoft Access Driver (*.mdb, *.accdb)}};DBQ={mdb_file}",
+            file=sys.stderr,
+        )
+        return []
+
     try:
         conn_str = (
             r"Driver={Microsoft Access Driver (*.mdb, *.accdb)};"
@@ -121,6 +171,17 @@ def mdb_sql_win(mdb_file, sql):
     if platform.system() != "Windows" or not pyodbc:
         return mdb_sql(mdb_file, sql)
 
+    # Ensure we have a proper string path
+    if not isinstance(mdb_file, str):
+        mdb_file = str(mdb_file)
+
+    # Handle potential path issues on Windows
+    try:
+        # Convert to absolute path to avoid any relative path issues
+        mdb_file = os.path.abspath(mdb_file)
+    except Exception:
+        pass  # If we can't make it absolute, use as-is
+
     try:
         conn_str = (
             r"Driver={Microsoft Access Driver (*.mdb, *.accdb)};"
@@ -134,8 +195,19 @@ def mdb_sql_win(mdb_file, sql):
         cursor.close()
         conn.close()
         return f"{affected} rows affected"
+    except pyodbc.Error as e:
+        print(f"Error executing SQL on Windows (pyodbc error): {e}", file=sys.stderr)
+        print(
+            f"  Connection string was: Driver={{Microsoft Access Driver (*.mdb, *.accdb)}};DBQ={mdb_file}",
+            file=sys.stderr,
+        )
+        return ""
     except Exception as e:
         print(f"Error executing SQL on Windows: {e}", file=sys.stderr)
+        print(
+            f"  Connection string was: Driver={{Microsoft Access Driver (*.mdb, *.accdb)}};DBQ={mdb_file}",
+            file=sys.stderr,
+        )
         return ""
 
 
