@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 TTTurnier_KO_Reorder - Reorder Phase 2 KO pairings for TTTurnier tournaments.
-Reads from .mdb database (via mdbtools on Unix or pyodbc on Windows), rearranges Round of 32, writes back.
+Reads from .mdb database (via mdbtools on Unix or pyodbc on Windows),
+rearranges first round of Phase 2, the KO round, writes back to the db.
 
 Usage:
     python TTTurnier_KO_Reorder.py [-v] [-n] database.mdb
@@ -285,7 +286,7 @@ def main():
     backup = os.path.join(mdb_dir, f"{mdb_name}.bak")
 
     if os.path.exists(backup):
-        print(f"Backup already exists: {backup}")
+        print(f"Backup already exists: {backup} (not overwriting)")
     else:
         shutil.copy2(mdb_file, backup)
         print(f"Backed up: {backup}")
@@ -503,6 +504,39 @@ def main():
 
     print(f"Position map has {len(position_map)} players")
 
+    # Print initial pairings before conflict resolution
+    print("\n=== INITIAL KO ROUND 1 PAIRINGS ===\n")
+    print(
+        f"{'Match':<5} {'Player A':<24} {'Verein A':<22} {' vs'} {'Player B':<24} {'Verein B':<25}"
+    )
+    print("-" * 100)
+    matches = bracket_size // 2
+    for i in range(matches):
+        pos_a = 2 * i + 1
+        pos_b = 2 * i + 2
+
+        p_a_data = position_map.get(pos_a)
+        p_b_data = position_map.get(pos_b)
+
+        if not p_a_data or not p_b_data:
+            # Skip if one or both positions are empty (byes)
+            continue
+
+        p_a = players.get(p_a_data["pid"])
+        p_b = players.get(p_b_data["pid"])
+
+        if not p_a or not p_b:
+            continue
+
+        # Format: "1-2 G1P1 Name Verein - GxP2 Name Verein"
+        a_designation = p_a_data["type"]  # e.g., "G1P1"
+        b_designation = p_b_data["type"]  # e.g., "G2P2"
+
+        conflict = " ***" if p_a["verein"] == p_b["verein"] else ""
+        print(
+            f"{pos_a:<2}-{pos_b:<2} {a_designation:<5} {p_a['name']:<18} {p_a['verein']:<23} vs {b_designation:<5} {p_b['name']:<18} {p_b['verein']:<23}{conflict}"
+        )
+
     # Check conflicts
     def check_conflicts(pos_map, bracket_size):
         conflicts = []
@@ -526,7 +560,7 @@ def main():
         return conflicts
 
     conflicts = check_conflicts(position_map, bracket_size)
-    print(f"Initial club conflicts: {len(conflicts)}")
+    print(f"\nInitial club conflicts: {len(conflicts)}")
     if verbose:
         for c in conflicts:
             print(
@@ -559,9 +593,9 @@ def main():
     # Print final pairings
     print("\n=== FINAL KO ROUND 1 PAIRINGS ===\n")
     print(
-        f"{'Pos':>3}  {'Player A':<25} {'LivePZ':>6}  {'Player B':<25} {'LivePZ':>6}  {'Club'}"
+        f"{'Match':<5} {'Player A':<24} {'Verein A':<22} {' vs'} {'Player B':<24} {'Verein B':<25}"
     )
-    print("-" * 95)
+    print("-" * 100)
 
     matches = bracket_size // 2
     for i in range(matches):
@@ -581,10 +615,15 @@ def main():
         if not p_a or not p_b:
             continue
 
+        # Format: "1-2 G1P1 Name Verein - GxP2 Name Verein"
+        a_designation = p_a_data["type"]  # e.g., "G1P1"
+        b_designation = p_b_data["type"]  # e.g., "G2P2"
+
         conflict = " ***" if p_a["verein"] == p_b["verein"] else ""
         print(
-            f"{pos_a:>2}-{pos_b:<2}  {p_a['name'][:24]:<24} {p_a['livepz']:>6}  {p_b['name'][:24]:<24} {p_b['livepz']:>6}  {p_a['verein'][:20]}{conflict}"
+            f"{pos_a:<2}-{pos_b:<2} {a_designation:<5} {p_a['name']:<18} {p_a['verein']:<23} vs {b_designation:<5} {p_b['name']:<18} {p_b['verein']:<23}{conflict}"
         )
+    print("-" * 95)
 
     # Read Phase 2 games
     spiele_raw = mdb_export(mdb_file, "tbl_Spiele")
@@ -646,7 +685,7 @@ def main():
             )
     else:
         # Write updates using mdb-sql
-        print("\nApplying updates...")
+        print("\nFix the database...")
         for u in updates:
             sql = f"UPDATE tbl_Spiele SET tsp_refSpielerA_1='{u['new_a']}', tsp_refSpielerB_1='{u['new_b']}' WHERE tsp_ID={u['game_id']};\n"
             mdb_sql(mdb_file, sql)
