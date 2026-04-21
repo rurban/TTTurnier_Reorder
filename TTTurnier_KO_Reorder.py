@@ -232,19 +232,51 @@ def mdb_sql(mdb_file, sql):
         return ""
 
 
-def generate_standard_seeding(size):
-    """Generate standard tournament seeding for bracket size (power of 2)"""
-    if size == 1:
+def standard_seeding(n):
+    """Standard tournament seeding for a bracket of size n (must be a power of 2).
+
+    Returns a list where element i (0-indexed) is the seed (1-indexed) placed at
+    bracket position i+1.  Seed 1 and seed 2 meet only in the final, seeds 1/3/4
+    meet only in semis, etc.
+
+    Examples:
+        standard_seeding(2)  -> [1, 2]
+        standard_seeding(4)  -> [1, 4, 2, 3]
+        standard_seeding(8)  -> [1, 8, 4, 5, 2, 7, 3, 6]
+        standard_seeding(16) -> [1, 16, 8, 9, 4, 13, 5, 12, 2, 15, 7, 10, 3, 14, 6, 11]
+    """
+    if n <= 1:
         return [1]
-    # Recursively build: take odd positions, then even positions reversed
-    odd = generate_standard_seeding(size // 2)
-    even = [x + size // 2 for x in odd]
-    # Interleave: first half odds, second half evens
+    prev = standard_seeding(n // 2)
     result = []
-    for i in range(len(odd)):
-        result.append(odd[i])
-        result.append(even[i])
+    for s in prev:
+        result.append(s)
+        result.append(n + 1 - s)
     return result
+
+
+# Threshold table: player count -> recommended group count.
+# Aim for 4-5 players per group.  Group count should be a power of 2 so the
+# full KO bracket (2*m) is also a power of 2 and round-1 byes are avoided.
+# Non-power-of-2 counts are supported but the top seeds receive round-1 byes.
+GROUP_COUNT_THRESHOLDS = [
+    # (max_players, groups,  note)
+    (16, 4, "4 groups of 2-4, bracket 8,  0 byes"),
+    (32, 8, "8 groups of 3-4, bracket 16, 0 byes"),
+    (48, 12, "12 groups of 3-4, bracket 32, 8 byes for top seeds"),
+    (56, 12, "12 groups of 4-5, bracket 32, 8 byes for top seeds"),
+    (80, 16, "16 groups of 4-5, bracket 32, 0 byes"),
+    (160, 32, "32 groups of 4-5, bracket 64, 0 byes"),
+]
+
+
+def recommend_group_count(num_players):
+    """Return (groups, note) for the given player count."""
+    for max_p, groups, note in GROUP_COUNT_THRESHOLDS:
+        if num_players <= max_p:
+            return groups, note
+    g, n = GROUP_COUNT_THRESHOLDS[-1][1], GROUP_COUNT_THRESHOLDS[-1][2]
+    return g, n
 
 
 def parse_args():
@@ -355,112 +387,108 @@ def main():
         winners.append(group_results[g].get(1, "-1"))
         seconds.append(group_results[g].get(2, "-1"))
 
-    # Calculate bracket size (power of 2 >= number of advancers)
     num_groups = len(groups)
     num_advancers = num_groups * 2  # winner + second from each group
 
-    # Find smallest power of 2 >= num_advancers
-    bracket_size = 1
-    while bracket_size < num_advancers:
-        bracket_size *= 2
-
+    # winner_bracket: smallest power of 2 >= num_groups.
+    # Full KO bracket = 2 * winner_bracket (one winner + one runner-up per match).
+    winner_bracket = 1
+    while winner_bracket < num_groups:
+        winner_bracket *= 2
+    bracket_size = winner_bracket * 2
     num_byes = bracket_size - num_advancers
+
+    # Advisory: recommend group count for the player total visible in tbl_Spieler.
+    rec_groups, rec_note = recommend_group_count(len(players))
+    if num_groups != rec_groups:
+        print(
+            f"Note: {len(players)} players -> recommended {rec_groups} groups "
+            f"({rec_note}); found {num_groups} groups."
+        )
+
+    print(
+        f"Groups: {num_groups}, Advancers: {num_advancers}, "
+        f"Bracket: {bracket_size}, Byes: {num_byes}"
+        + (" (top seeds advance without a round-1 match)" if num_byes else "")
+    )
+
+    # Build seed -> winner position using standard tournament seeding.
+    #
+    # standard_seeding(winner_bracket) gives the seed at each position 1..winner_bracket.
+    # Winner of seed s (= group s, ranked by initial LivePZ) goes to the A-side
+    # (odd position) of the corresponding full-bracket match:
+    #   winner_bracket pos k  ->  full bracket pos 2k-1  (A-side, always odd)
+    #
+    # Runner-up of seed s goes to the B-side (even position) of the mirror match
+    # in the opposite half of the full bracket, so winner and runner-up from the
+    # same group can never meet in round 1.
+    #
+    # Formula (half = bracket_size // 2):
+    #   If full_pos <= half  ->  second_pos = full_pos + half + 1   (lower half, even)
+    #   If full_pos >  half  ->  second_pos = full_pos - half + 1   (upper half, even)
+    #
+    # Seeds beyond num_groups are phantom (no player); their positions become byes.
+
+    seeding = standard_seeding(winner_bracket)  # list: pos -> seed (1-indexed)
+    seed_to_wpos = {}  # seed -> winner-bracket position
+    for pos_idx, seed in enumerate(seeding):
+        seed_to_wpos[seed] = pos_idx + 1
+
+    half = bracket_size // 2
+    winner_pos = {}  # seed -> full-bracket position (odd)
+    second_pos = {}  # seed -> full-bracket position (even, opposite half)
+
+    for seed, wpos in seed_to_wpos.items():
+        full_pos = 2 * wpos - 1  # A-side, odd
+        winner_pos[seed] = full_pos
+        if full_pos <= half:
+            second_pos[seed] = full_pos + half + 1
+        else:
+            second_pos[seed] = full_pos - half + 1
 
     if verbose:
         print(
-            f"Groups: {num_groups}, Advancers: {num_advancers}, Bracket size: {bracket_size}, Byes: {num_byes}"
+            f"Winner positions (seeds 1..{num_groups}): "
+            f"{[winner_pos[s] for s in range(1, num_groups + 1)]}"
         )
+        print(
+            f"Second positions (seeds 1..{num_groups}): "
+            f"{[second_pos[s] for s in range(1, num_groups + 1)]}"
+        )
+        bye_seeds = [s for s in range(num_groups + 1, winner_bracket + 1)]
+        if bye_seeds:
+            bye_w = [winner_pos[s] for s in bye_seeds]
+            bye_s = [second_pos[s] for s in bye_seeds]
+            print(
+                f"Bye positions (seeds {bye_seeds[0]}..{bye_seeds[-1]}): "
+                f"winner slots {bye_w}, second slots {bye_s}"
+            )
 
-    # Standard seeding for bracket size (power of 2)
-    # This generates the standard tournament bracket seeding
-    def generate_standard_seeding(size):
-        """Generate standard tournament seeding for bracket size (power of 2)"""
-        if size == 1:
-            return [1]
-        # Recursively build: take odd positions, then even positions reversed
-        odd = generate_standard_seeding(size // 2)
-        even = [x + size // 2 for x in odd]
-        # Interleave: first half odds, second half evens
-        result = []
-        for i in range(len(odd)):
-            result.append(odd[i])
-            result.append(even[i])
-        return result
-
-    # Generate seeding: position -> seed (where seed 1 is best player)
-    seeding = generate_standard_seeding(bracket_size)
-    # Convert to position -> seed mapping
-    pos_to_seed = {}
-    for pos, seed in enumerate(seeding, start=1):
-        pos_to_seed[pos] = seed
-
-    # Now we need to map our groups to positions based on CLAUDE.md rules
-    # But we only have num_groups groups, not necessarily 16
-    # We'll adapt the CLAUDE.md pattern proportionally
-
-    # Generate winner positions: alternate top/bottom halves (same as CLAUDE.md pattern)
-    # For 32: 1,32,17,16,9,24,25,8,12,21,28,5,13,20,30,4
-    n = num_groups * 2
-    winner_positions = []
-    top = list(range(1, n // 2 + 1))  # 1 to 16
-    bottom = list(range(n, n // 2, -1))  # 32 to 17 (reversed)
-
-    # Interleave: 1,32,17,16,9,24,25,8,...
-    for i in range(len(top)):
-        winner_positions.append(top[i])
-        if i < len(bottom):
-            winner_positions.append(bottom[i])
-    winner_positions = winner_positions[:num_groups]
-
-    # Generate second positions: in OTHER bracket half (NOT same match pair!)
-    # If winner in upper half (1-16), second in lower half (17-32) at same relative position
-    # If winner in lower half (17-32), second in upper half (1-16) at same relative position
-    # This ensures winner vs second from SAME GROUP never meet in Round 1
-    second_positions = []
-    for pos in winner_positions:
-        if pos <= n // 2:
-            # Upper half -> lower half at same relative position
-            second_positions.append(pos + n // 2)
-        else:
-            # Lower half -> upper half at same relative position
-            second_positions.append(pos - n // 2)
-
-    # Convert to dicts
-    winner_pos = {i + 1: pos for i, pos in enumerate(winner_positions)}
-    second_pos = {i + 1: pos for i, pos in enumerate(second_positions)}
-
-    if verbose:
-        print(f"Winner positions: {[winner_pos[i] for i in range(1, num_groups + 1)]}")
-        print(f"Second positions: {[second_pos[i] for i in range(1, num_groups + 1)]}")
-
-    # Build position map
-    position_map = {}  # position -> {pid, type, group}
+    # Build position map. Only real groups (seeds 1..num_groups) get players.
+    # Phantom-seed positions stay absent -> byes.
+    position_map = {}  # full-bracket position -> {pid, type, group}
     for i, g in enumerate(groups, 1):
-        pid = winners[i - 1] if i - 1 < len(winners) else "-1"
-        if pid and pid != "-1" and pid in players:
-            if i in winner_pos:
-                position_map[winner_pos[i]] = {
-                    "pid": pid,
-                    "type": f"G{i}P1",
-                    "group": i,
-                }
-            else:
-                # Fallback: assign to next available position
-                pass
+        seed = i
+        w_pid = winners[seed - 1] if seed - 1 < len(winners) else "-1"
+        s_pid = seconds[seed - 1] if seed - 1 < len(seconds) else "-1"
 
-        pid = seconds[i - 1] if i - 1 < len(seconds) else "-1"
-        if pid and pid != "-1" and pid in players:
-            if i in second_pos:
-                position_map[second_pos[i]] = {
-                    "pid": pid,
-                    "type": f"G{i}P2",
-                    "group": i,
-                }
-            else:
-                # Fallback: assign to next available position
-                pass
+        if w_pid and w_pid != "-1" and w_pid in players:
+            position_map[winner_pos[seed]] = {
+                "pid": w_pid,
+                "type": f"G{seed}P1",
+                "group": seed,
+            }
+        if s_pid and s_pid != "-1" and s_pid in players:
+            position_map[second_pos[seed]] = {
+                "pid": s_pid,
+                "type": f"G{seed}P2",
+                "group": seed,
+            }
 
-    print(f"Position map has {len(position_map)} players")
+    print(
+        f"Position map has {len(position_map)} players "
+        f"({num_byes} bye slot(s) left empty)"
+    )
 
     # Print initial pairings before conflict resolution
     print("\n=== INITIAL KO ROUND 1 PAIRINGS ===\n")
@@ -476,8 +504,18 @@ def main():
         p_a_data = position_map.get(pos_a)
         p_b_data = position_map.get(pos_b)
 
+        if not p_a_data and not p_b_data:
+            continue  # phantom match, skip entirely
+
         if not p_a_data or not p_b_data:
-            # Skip if one or both positions are empty (byes)
+            # One slot is a bye
+            p_data = p_a_data or p_b_data
+            p = players.get(p_data["pid"])
+            if p:
+                print(
+                    f"{pos_a:<2}-{pos_b:<2} {p_data['type']:<5} {p['name']:<18} "
+                    f"{p['verein']:<23} vs {'BYE'}"
+                )
             continue
 
         p_a = players.get(p_a_data["pid"])
@@ -486,10 +524,8 @@ def main():
         if not p_a or not p_b:
             continue
 
-        # Format: "1-2 G1P1 Name Verein - GxP2 Name Verein"
-        a_designation = p_a_data["type"]  # e.g., "G1P1"
-        b_designation = p_b_data["type"]  # e.g., "G2P2"
-
+        a_designation = p_a_data["type"]
+        b_designation = p_b_data["type"]
         conflict = " ***" if p_a["verein"] == p_b["verein"] else ""
         print(
             f"{pos_a:<2}-{pos_b:<2} {a_designation:<5} {p_a['name']:<18} {p_a['verein']:<23} vs {b_designation:<5} {p_b['name']:<18} {p_b['verein']:<23}{conflict}"
@@ -590,8 +626,18 @@ def main():
         p_a_data = position_map.get(pos_a)
         p_b_data = position_map.get(pos_b)
 
+        if not p_a_data and not p_b_data:
+            continue  # phantom match
+
         if not p_a_data or not p_b_data:
-            # Skip if one or both positions are empty (byes)
+            # One slot is a bye: the present player advances without a match
+            p_data = p_a_data or p_b_data
+            p = players.get(p_data["pid"])
+            if p:
+                print(
+                    f"{pos_a:<2}-{pos_b:<2} {p_data['type']:<5} {p['name']:<18} "
+                    f"{p['verein']:<23} vs {'BYE':<5} (advances to round 2)"
+                )
             continue
 
         p_a = players.get(p_a_data["pid"])
@@ -600,17 +646,13 @@ def main():
         if not p_a or not p_b:
             continue
 
-        # Check if player was changed from original
         old_a = pos_to_old_player.get(pos_a)
         old_b = pos_to_old_player.get(pos_b)
         a_changed = old_a and old_a != p_a_data["pid"]
         b_changed = old_b and old_b != p_b_data["pid"]
 
-        # Format: "1-2 G1P1 Name Verein - GxP2 Name Verein"
-        a_designation = p_a_data["type"]  # e.g., "G1P1"
-        b_designation = p_b_data["type"]  # e.g., "G2P2"
-
-        # Add red color if changed
+        a_designation = p_a_data["type"]
+        b_designation = p_b_data["type"]
         a_name = f"{RED}{p_a['name']}{RESET}" if a_changed else p_a["name"]
         b_name = f"{RED}{p_b['name']}{RESET}" if b_changed else p_b["name"]
 
@@ -626,7 +668,9 @@ def main():
 
     print(f"\nFound {len(phase2_r1)} Phase 2 Round 1 games")
 
-    # Generate SQL updates
+    # Generate SQL updates.
+    # Positions absent from position_map are byes: write -1 for that player slot.
+    BYE_ID = "-1"
     updates = []
     for row in phase2_r1:
         try:
@@ -635,11 +679,12 @@ def main():
         except (ValueError, TypeError):
             continue
 
-        if pos_a not in position_map or pos_b not in position_map:
-            continue
+        new_a = position_map[pos_a]["pid"] if pos_a in position_map else BYE_ID
+        new_b = position_map[pos_b]["pid"] if pos_b in position_map else BYE_ID
 
-        new_a = position_map[pos_a]["pid"]
-        new_b = position_map[pos_b]["pid"]
+        # Skip fully phantom matches (no player on either side and both already -1)
+        if new_a == BYE_ID and new_b == BYE_ID:
+            continue
 
         old_a = row.get("tsp_refSpielerA_1")
         old_b = row.get("tsp_refSpielerB_1")
