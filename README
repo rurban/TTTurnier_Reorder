@@ -1,117 +1,141 @@
-# NAME
+# TTTurnier Reorder – Gruppeneinteilung und KO-Auslosung
 
-TTTurnier\_Reorder - Group draw generator for TTTurnier tournaments
+Zwei Python-Skripte für Turnierleiter, die mit der TTTurnier-Software arbeiten.
+Keine Programmierkenntnisse erforderlich.
 
-# SYNOPSIS
+---
 
-    perl TTTurnier_Reorder.pl [<Anmeldung.xls|Anmeldung.fods> [<output.html>]]
+## Voraussetzungen (einmalig)
 
-    # Auto-detect Anmeldung*.fods (preferred) or *.xls in the script directory:
-    perl TTTurnier_Reorder.pl
+**Python** muss installiert sein (https://www.python.org/downloads/).
+Nach der Installation einmalig in der Eingabeaufforderung ausführen:
 
-    # Explicit input, auto output next to script/exe (Anmeldung_92067.html):
-    perl TTTurnier_Reorder.pl Anmeldung_92067.xls
-    perl TTTurnier_Reorder.pl Anmeldung_92067.fods
-    perl TTTurnier_Reorder.pl Anmeldung_92067.xml
+    pip install lxml pyodbc
 
-    # Explicit input and output:
-    perl TTTurnier_Reorder.pl Anmeldung_92067.fods Gruppen.html
+---
 
-    # On Windows (compiled with PAR::Packer / pp), drag/drop onto the exe
-    # or pass the file on the command line:
-    TTTurnier_Reorder.exe Anmeldung_92067.fods
+## Wo liegen die Dateien?
 
-# DESCRIPTION
+Die zwei Skripte **TTTurnier_Reorder.py** und **TTTurnier_KO_Reorder.py**
+einfach in dasselbe Verzeichnis legen, in dem die `.mdb`-Datei der
+Turniersoftware liegt – üblicherweise der **Downloads**-Ordner.
 
-Reads a TTTurnier registration export in SpreadsheetML format (`.xls`) or
-ODF Flat Spreadsheet format (`.fods`, as saved by LibreOffice Calc).
-It also understands the XML file in Excel saved as XML-Kalkulationstabelle 2003.
-The file contains one overview sheet (`Turnieranmeldungen`) and one sheet
-per tournament category.  Each category sheet with more than 8 players is
-processed into groups.
+---
 
-Written for the SVF Dresden, for the SEM-B and SEM-A tournaments in 2026.
-There is another step later for the KO-stage. See `TTTurnier_KO_Reorder.pl`
+## Schritt 1 – Gruppeneinteilung vor der Vorrunde
 
-Auf Deutsch: [https://forum.tt-news.de/showthread.php?p=3873975](https://forum.tt-news.de/showthread.php?p=3873975)
+### Wann?
 
-Zuerst einmal fuer eine ordentliche Gruppeneinteilung mit den
-Umsetzungen nach der Vereinsregel.
+Nach dem ersten Import der Anmeldungen in TTTurnier, bevor die Vorrunde
+gestartet wird.
 
-Als Eingabe braucht man die Anmeldung\_XXXXX.xls, die man sich im
-www.tt-turniercenter.de herunterlaedt, diese Datei dropped man auf das
-Script am Desktop (perl sollte installiert sein, ein .exe kommt
-spaeter), und dabei wird ein Anmeldung\_XXXXX.html generiert, wie im
-Bespiel [https://rurban.github.io/TTTurnier\_Reorder/Anmeldung\_anon.html](https://rurban.github.io/TTTurnier_Reorder/Anmeldung_anon.html)
+### Was macht das Skript?
 
-Wenn man die Anmeldungen aendern, muss weil jemand nicht erschienen
-ist, kann das .xls in **Excel** oder **LibreOffice Calc** oeffnen, in der
-Gruppe diejenigen Zeilen loeschen, und im Excel als
-XML-Kalkulationstabelle 2003 speichern, oder in LibreOffice Calc als
-ODF Flat Spreadsheet (.fods) speichern.
-Und dann `TTTurnier_Reorder.pl` damit oeffnen.
+- Liest die Spielerliste direkt aus der `.mdb`-Datenbank.
+- Teilt alle Spieler nach LivePZ in gleich starke Gruppen ein
+  (Anzahl und Größe werden automatisch berechnet).
+- Verschiebt Spieler so, dass möglichst keine zwei Spieler desselben
+  Vereins in derselben Gruppe landen (**Vereinsregel**).
+- Schreibt die Gruppeneinteilung direkt in die Datenbank zurück,
+  sodass TTTurnier sie sofort übernimmt.
+- Erstellt außerdem eine **HTML-Übersicht** zum Ausdrucken oder Anzeigen.
+  Rot markierte Spieler wurden wegen der Vereinsregel umgesetzt.
 
-Die Anzahl und Groesse der Gruppen wird automatisch erstellt.
-Und dann das initiale Ranking wie noch bei Henke.
-Und dann die Umsetzungen in Rot, damit moeglichst wenige Spieler
-herumgeschoben muessen.
+### Aufruf
 
-Alle roten Spieler sind die noetigen Umsetzungen nach der
-Vereinsregel. Die muss man dann in den TT Software herumschieben.
+Doppelklick auf `TTTurnier_Reorder.py` genügt nicht – Python-Skripte
+werden in der **Eingabeaufforderung** gestartet.
 
-## Algorithm
+Eingabeaufforderung öffnen (Windows-Taste → `cmd` eingeben → Enter),
+dann in den Downloads-Ordner wechseln:
 
-- 1. **Sort** all players by LivePZ (rating) descending.
-- 2. **Determine group count** based on field size:
+    cd Downloads
 
-        n <= 40  =>  8 groups  (max 4-5 players each)
-        n <= 64  => 16 groups  (max 4 players each)
-        larger   =>  next power-of-2 / 4 groups
+Skript starten:
 
-    TODO: For Rangliste make bigger groups so that each player
-    plays 6-8 times. There are only 1-2 groups, no KO-stage.
+    python TTTurnier_Reorder.py
 
-- 3. **Initial seeding** by round-robin:
+Das Skript findet die `.mdb`-Datei automatisch. Falls mehrere vorhanden
+sind, die gewünschte angeben:
 
-    p1->G1, p2->G2, ..., pm->Gm, p(m+1)->G1, ...
-    This keeps the LivePZ spread within each group as even as possible.
+    python TTTurnier_Reorder.py MeinTurnier.mdb
 
-- 4. **Re-arrange by Verein (club)**:
+Nur anzeigen, ohne zu schreiben (Probelauf):
 
-    iteratively swap players to ensure no two players from the same club
-    share a group. Each swap chooses the partner from another group that
-    minimises the absolute LivePZ difference, so the overall rating
-    balance is disturbed as little as possible. If a club has more players
-    than there are groups, some sharing is unavoidable and the remaining
-    conflict is left in place.
+    python TTTurnier_Reorder.py MeinTurnier.mdb -n
 
-## Output
+Ausführliche Ausgabe:
 
-A self-contained HTML file with one card per group.  Players who were
-moved during the re-arrangement step are coloured **red**; players who
-stayed in their originally seeded group are shown in black.
+    python TTTurnier_Reorder.py MeinTurnier.mdb -v
 
-The output file is written next to the script/executable (or to
-`ARGV[1]` if supplied), using the input basename with a `.html`
-extension.
+### Danach in TTTurnier
 
-See an example [https://rurban.github.io/TTTurnier\_Reorder/Anmeldung\_anon.html](https://rurban.github.io/TTTurnier_Reorder/Anmeldung_anon.html)
-for 60 players.
+TTTurnier neu laden bzw. die Gruppen-Ansicht aktualisieren –
+die Spieler sind nun auf die Gruppen verteilt.
+Noch verbliebene rote Spieler (unlösbare Vereinskonflikte) müssen
+manuell in TTTurnier verschoben werden.
 
-# DEPENDENCIES
+---
 
-[XML::LibXML](https://metacpan.org/pod/XML%3A%3ALibXML) (included in Strawberry Perl for Windows).
+## Schritt 2 – KO-Auslosung nach der Vorrunde
 
-To build a standalone Windows executable:
+### Wann?
 
-    pp -o TTTurnier_Reorder.exe TTTurnier_Reorder.pl
-or
-    perl2exe TTTurnier_Reorder.pl
+Nachdem alle Vorrundenspiele beendet sind und bevor die KO-Runde
+in TTTurnier gestartet wird.
 
-# AUTHOR
+### Was macht das Skript?
 
-Reini Urban
+TTTurnier setzt die Gruppensieger und -zweiten in der KO-Runde
+oft falsch ein. Dieses Skript:
 
-# LICENSE
+- Liest die Vorrundenplatzierungen aus der Datenbank.
+- Verteilt die Gruppensieger nach dem **Standard-Setzschema**
+  (Sieger 1 oben, Sieger 2 unten, dann halbiert usw.).
+- Stellt sicher, dass Sieger und Zweiter einer Gruppe erst in einem
+  späteren KO-Spiel aufeinandertreffen.
+- Vermeidet Vereinsduelle bereits in der ersten KO-Runde.
+- Schreibt die korrigierten Paarungen in die Datenbank.
 
-GPL-3.0-or-later
+### Aufruf
+
+    python TTTurnier_KO_Reorder.py
+
+Oder mit der `.mdb`-Datei angeben:
+
+    python TTTurnier_KO_Reorder.py MeinTurnier.mdb
+
+Probelauf (zeigt die neuen Paarungen, schreibt aber nichts):
+
+    python TTTurnier_KO_Reorder.py MeinTurnier.mdb -n
+
+### Danach in TTTurnier
+
+KO-Ansicht neu laden – die erste KO-Runde zeigt jetzt die
+korrekten Paarungen.
+
+---
+
+## Sicherung
+
+Beide Skripte legen beim ersten Start automatisch eine Sicherungskopie
+der `.mdb`-Datei an (`MeinTurnier.mdb.bak`). Diese Sicherung wird
+**nicht** überschrieben, wenn sie bereits vorhanden ist.
+
+---
+
+## Beispiel-Ausgabe (HTML)
+
+https://rurban.github.io/TTTurnier_Reorder/Anmeldung_anon.html
+
+---
+
+## Diskussion
+
+https://forum.tt-news.de/showthread.php?p=3873975
+
+---
+
+## Lizenz
+
+GPL-3.0-or-later – Reini Urban
