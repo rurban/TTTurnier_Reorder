@@ -548,7 +548,34 @@ def main():
 
     print(f"Final club conflicts: {len(conflicts)}")
 
+    # Read Phase 2 games early (for change detection in final pairings)
+    spiele_raw = mdb_export(mdb_file, "tbl_Spiele")
+    phase2_r1 = [
+        r
+        for r in spiele_raw
+        if r.get("tsp_iPhase") == "2" and r.get("tsp_iRunde") == "1"
+    ]
+
     # Print final pairings
+    # Build a map of position -> old player ID from original Phase 2 games
+    pos_to_old_player = {}
+    for row in phase2_r1:
+        try:
+            pos_a = int(row.get("tsp_iPosAPlan", 0))
+            pos_b = int(row.get("tsp_iPosBPlan", 0))
+        except (ValueError, TypeError):
+            continue
+        old_a = row.get("tsp_refSpielerA_1")
+        old_b = row.get("tsp_refSpielerB_1")
+        if old_a:
+            pos_to_old_player[pos_a] = old_a
+        if old_b:
+            pos_to_old_player[pos_b] = old_b
+
+    # Red color for ANSI
+    RED = "\033[91m"
+    RESET = "\033[0m"
+
     print("\n=== FINAL KO ROUND 1 PAIRINGS ===\n")
     print(
         f"{'Match':<5} {'Player A':<24} {'Verein A':<22} {' vs'} {'Player B':<24} {'Verein B':<25}"
@@ -573,23 +600,25 @@ def main():
         if not p_a or not p_b:
             continue
 
+        # Check if player was changed from original
+        old_a = pos_to_old_player.get(pos_a)
+        old_b = pos_to_old_player.get(pos_b)
+        a_changed = old_a and old_a != p_a_data["pid"]
+        b_changed = old_b and old_b != p_b_data["pid"]
+
         # Format: "1-2 G1P1 Name Verein - GxP2 Name Verein"
         a_designation = p_a_data["type"]  # e.g., "G1P1"
         b_designation = p_b_data["type"]  # e.g., "G2P2"
 
+        # Add red color if changed
+        a_name = f"{RED}{p_a['name']}{RESET}" if a_changed else p_a["name"]
+        b_name = f"{RED}{p_b['name']}{RESET}" if b_changed else p_b["name"]
+
         conflict = " ***" if p_a["verein"] == p_b["verein"] else ""
         print(
-            f"{pos_a:<2}-{pos_b:<2} {a_designation:<5} {p_a['name']:<18} {p_a['verein']:<23} vs {b_designation:<5} {p_b['name']:<18} {p_b['verein']:<23}{conflict}"
+            f"{pos_a:<2}-{pos_b:<2} {a_designation:<5} {a_name:<18} {p_a['verein']:<23} vs {b_designation:<5} {b_name:<18} {p_b['verein']:<23}{conflict}"
         )
     print("-" * 95)
-
-    # Read Phase 2 games
-    spiele_raw = mdb_export(mdb_file, "tbl_Spiele")
-    phase2_r1 = [
-        r
-        for r in spiele_raw
-        if r.get("tsp_iPhase") == "2" and r.get("tsp_iRunde") == "1"
-    ]
 
     if not phase2_r1:
         print("No Phase 2 Round 1 games found")
