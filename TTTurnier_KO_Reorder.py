@@ -347,9 +347,31 @@ def main():
 
     print(f"Loaded {len(players)} players")
 
-    # Read group results
+    # Map each Gruppe to its Klasse. A single .mdb file commonly hosts several
+    # independent tournament classes (age groups, divisions, ...) whose groups
+    # and KO games share the same tbl_Gruppen/tbl_Tabelle/tbl_Spiele tables.
+    # Everything below must be scoped per Klasse, otherwise groups (and bracket
+    # positions, which restart at 1 for every class) from unrelated classes get
+    # merged into one bracket and produce duplicate/garbage pairings.
+    gruppen_raw = mdb_export(mdb_file, "tbl_Gruppen")
+    gruppe_to_klasse = {}
+    for row in gruppen_raw:
+        gid = row.get("tgr_ID")
+        kid = row.get("tgr_refKlassenID")
+        if gid and kid:
+            gruppe_to_klasse[gid] = kid
+
+    klassen_raw = mdb_export(mdb_file, "tbl_Klassen")
+    klasse_name = {}
+    for row in klassen_raw:
+        kid = row.get("tkl_ID")
+        if kid:
+            klasse_name[kid] = row.get("tkl_sKlassenname", "") or kid
+
+    # Read group results, split by Klasse
     tabelle_raw = mdb_export(mdb_file, "tbl_Tabelle")
-    group_results = {}  # gruppe -> {1: winner_id, 2: second_id}
+    group_results_by_klasse = {}  # klasse -> gruppe -> {1: winner_id, 2: second_id}
+    klasse_player_count = {}  # klasse -> set of distinct player ids (any Platz)
 
     for row in tabelle_raw:
         gruppe = row.get("tta_refGruppenID")
@@ -358,6 +380,10 @@ def main():
 
         if not gruppe or not platz or not spieler or spieler == "-1":
             continue
+
+        klasse = gruppe_to_klasse.get(gruppe, "")
+        klasse_player_count.setdefault(klasse, set()).add(spieler)
+
         try:
             platz = int(platz)
         except ValueError:
@@ -365,360 +391,394 @@ def main():
         if platz not in (1, 2):
             continue
 
+        group_results = group_results_by_klasse.setdefault(klasse, {})
         if gruppe not in group_results:
             group_results[gruppe] = {}
         group_results[gruppe][platz] = spieler
 
-    groups = sorted(group_results.keys(), key=lambda x: int(x))
-    print(f"Found {len(groups)} groups")
+    # Read Phase 2 Round 1 games, split by Klasse
+    spiele_raw = mdb_export(mdb_file, "tbl_Spiele")
+    phase2_r1_by_klasse = {}
+    for r in spiele_raw:
+        if r.get("tsp_iPhase") == "2" and r.get("tsp_iRunde") == "1":
+            klasse = r.get("tsp_refKlasse", "")
+            phase2_r1_by_klasse.setdefault(klasse, []).append(r)
 
-    if verbose:
+    if not phase2_r1_by_klasse:
+        print("No Phase 2 Round 1 games found")
+        return
+
+    all_updates = []
+
+    for klasse in sorted(phase2_r1_by_klasse, key=lambda k: str(k)):
+        klasse_label = klasse_name.get(klasse, klasse or "?")
+        print(f"\n--- Klasse {klasse} ({klasse_label}) ---")
+
+        group_results = group_results_by_klasse.get(klasse, {})
+        phase2_r1 = phase2_r1_by_klasse[klasse]
+
+        groups = sorted(group_results.keys(), key=lambda x: int(x))
+        print(f"Found {len(groups)} groups")
+
+        if verbose:
+            for g in groups:
+                w = group_results[g].get(1, "-1")
+                s = group_results[g].get(2, "-1")
+                w_name = players.get(w, {}).get("name", "?") if w != "-1" else "N/A"
+                s_name = players.get(s, {}).get("name", "?") if s != "-1" else "N/A"
+                print(f"  Group {g}: winner={w} ({w_name}), second={s} ({s_name})")
+
+        # Extract winners and seconds by group order
+        winners = []
+        seconds = []
         for g in groups:
-            w = group_results[g].get(1, "-1")
-            s = group_results[g].get(2, "-1")
-            w_name = players.get(w, {}).get("name", "?") if w != "-1" else "N/A"
-            s_name = players.get(s, {}).get("name", "?") if s != "-1" else "N/A"
-            print(f"  Group {g}: winner={w} ({w_name}), second={s} ({s_name})")
+            winners.append(group_results[g].get(1, "-1"))
+            seconds.append(group_results[g].get(2, "-1"))
 
-    # Extract winners and seconds by group order
-    winners = []
-    seconds = []
-    for g in groups:
-        winners.append(group_results[g].get(1, "-1"))
-        seconds.append(group_results[g].get(2, "-1"))
+        num_groups = len(groups)
+        num_advancers = num_groups * 2  # winner + second from each group
 
-    num_groups = len(groups)
-    num_advancers = num_groups * 2  # winner + second from each group
+        # winner_bracket: smallest power of 2 >= num_groups.
+        # Full KO bracket = 2 * winner_bracket (one winner + one runner-up per match).
+        winner_bracket = 1
+        while winner_bracket < num_groups:
+            winner_bracket *= 2
+        bracket_size = winner_bracket * 2
+        num_byes = bracket_size - num_advancers
 
-    # winner_bracket: smallest power of 2 >= num_groups.
-    # Full KO bracket = 2 * winner_bracket (one winner + one runner-up per match).
-    winner_bracket = 1
-    while winner_bracket < num_groups:
-        winner_bracket *= 2
-    bracket_size = winner_bracket * 2
-    num_byes = bracket_size - num_advancers
-
-    # Advisory: recommend group count for the player total visible in tbl_Spieler.
-    rec_groups, rec_note = recommend_group_count(len(players))
-    if num_groups != rec_groups:
-        print(
-            f"Note: {len(players)} players -> recommended {rec_groups} groups "
-            f"({rec_note}); found {num_groups} groups."
+        # Advisory: recommend group count for this Klasse's own player total.
+        rec_groups, rec_note = recommend_group_count(
+            len(klasse_player_count.get(klasse, set()))
         )
-
-    print(
-        f"Groups: {num_groups}, Advancers: {num_advancers}, "
-        f"Bracket: {bracket_size}, Byes: {num_byes}"
-        + (" (top seeds advance without a round-1 match)" if num_byes else "")
-    )
-
-    # Build seed -> winner position using standard tournament seeding.
-    #
-    # standard_seeding(winner_bracket) gives the seed at each position 1..winner_bracket.
-    # Winner of seed s (= group s, ranked by initial LivePZ) goes to the A-side
-    # (odd position) of the corresponding full-bracket match:
-    #   winner_bracket pos k  ->  full bracket pos 2k-1  (A-side, always odd)
-    #
-    # Runner-up of seed s goes to the B-side (even position) of the mirror match
-    # in the opposite half of the full bracket, so winner and runner-up from the
-    # same group can never meet in round 1.
-    #
-    # Formula (half = bracket_size // 2):
-    #   If full_pos <= half  ->  second_pos = full_pos + half + 1   (lower half, even)
-    #   If full_pos >  half  ->  second_pos = full_pos - half + 1   (upper half, even)
-    #
-    # Seeds beyond num_groups are phantom (no player); their positions become byes.
-
-    seeding = standard_seeding(winner_bracket)  # list: pos -> seed (1-indexed)
-    seed_to_wpos = {}  # seed -> winner-bracket position
-    for pos_idx, seed in enumerate(seeding):
-        seed_to_wpos[seed] = pos_idx + 1
-
-    half = bracket_size // 2
-    winner_pos = {}  # seed -> full-bracket position (odd)
-    second_pos = {}  # seed -> full-bracket position (even, opposite half)
-
-    for seed, wpos in seed_to_wpos.items():
-        full_pos = 2 * wpos - 1  # A-side, odd
-        winner_pos[seed] = full_pos
-        if full_pos <= half:
-            second_pos[seed] = full_pos + half + 1
-        else:
-            second_pos[seed] = full_pos - half + 1
-
-    if verbose:
-        print(
-            f"Winner positions (seeds 1..{num_groups}): "
-            f"{[winner_pos[s] for s in range(1, num_groups + 1)]}"
-        )
-        print(
-            f"Second positions (seeds 1..{num_groups}): "
-            f"{[second_pos[s] for s in range(1, num_groups + 1)]}"
-        )
-        bye_seeds = [s for s in range(num_groups + 1, winner_bracket + 1)]
-        if bye_seeds:
-            bye_w = [winner_pos[s] for s in bye_seeds]
-            bye_s = [second_pos[s] for s in bye_seeds]
+        if num_groups != rec_groups:
             print(
-                f"Bye positions (seeds {bye_seeds[0]}..{bye_seeds[-1]}): "
-                f"winner slots {bye_w}, second slots {bye_s}"
+                f"Note: {len(klasse_player_count.get(klasse, set()))} players -> "
+                f"recommended {rec_groups} groups ({rec_note}); found {num_groups} groups."
             )
 
-    # Build position map. Only real groups (seeds 1..num_groups) get players.
-    # Phantom-seed positions stay absent -> byes.
-    position_map = {}  # full-bracket position -> {pid, type, group}
-    for i, g in enumerate(groups, 1):
-        seed = i
-        w_pid = winners[seed - 1] if seed - 1 < len(winners) else "-1"
-        s_pid = seconds[seed - 1] if seed - 1 < len(seconds) else "-1"
+        print(
+            f"Groups: {num_groups}, Advancers: {num_advancers}, "
+            f"Bracket: {bracket_size}, Byes: {num_byes}"
+            + (" (top seeds advance without a round-1 match)" if num_byes else "")
+        )
 
-        if w_pid and w_pid != "-1" and w_pid in players:
-            position_map[winner_pos[seed]] = {
-                "pid": w_pid,
-                "type": f"G{seed}P1",
-                "group": seed,
-            }
-        if s_pid and s_pid != "-1" and s_pid in players:
-            position_map[second_pos[seed]] = {
-                "pid": s_pid,
-                "type": f"G{seed}P2",
-                "group": seed,
-            }
+        # Build seed -> winner position using standard tournament seeding.
+        #
+        # standard_seeding(winner_bracket) gives the seed at each position 1..winner_bracket.
+        # Winner of seed s (= group s, ranked by initial LivePZ) goes to the A-side
+        # (odd position) of the corresponding full-bracket match:
+        #   winner_bracket pos k  ->  full bracket pos 2k-1  (A-side, always odd)
+        #
+        # Runner-up of seed s goes to the B-side (even position) of the mirror match
+        # in the opposite half of the full bracket, so winner and runner-up from the
+        # same group can never meet in round 1.
+        #
+        # Formula (half = bracket_size // 2):
+        #   If full_pos <= half  ->  second_pos = full_pos + half + 1   (lower half, even)
+        #   If full_pos >  half  ->  second_pos = full_pos - half + 1   (upper half, even)
+        #
+        # Seeds beyond num_groups are phantom (no player); their positions become byes.
 
-    print(
-        f"Position map has {len(position_map)} players "
-        f"({num_byes} bye slot(s) left empty)"
-    )
+        seeding = standard_seeding(winner_bracket)  # list: pos -> seed (1-indexed)
+        seed_to_wpos = {}  # seed -> winner-bracket position
+        for pos_idx, seed in enumerate(seeding):
+            seed_to_wpos[seed] = pos_idx + 1
 
-    # Print initial pairings before conflict resolution
-    print("\n=== INITIAL KO ROUND 1 PAIRINGS ===\n")
-    print(
-        f"{'Match':<5} {'Player A':<24} {'Verein A':<22} {' vs'} {'Player B':<24} {'Verein B':<25}"
-    )
-    print("-" * 100)
-    matches = bracket_size // 2
-    for i in range(matches):
-        pos_a = 2 * i + 1
-        pos_b = 2 * i + 2
+        half = bracket_size // 2
+        winner_pos = {}  # seed -> full-bracket position (odd)
+        second_pos = {}  # seed -> full-bracket position (even, opposite half)
 
-        p_a_data = position_map.get(pos_a)
-        p_b_data = position_map.get(pos_b)
+        for seed, wpos in seed_to_wpos.items():
+            full_pos = 2 * wpos - 1  # A-side, odd
+            winner_pos[seed] = full_pos
+            if full_pos <= half:
+                second_pos[seed] = full_pos + half + 1
+            else:
+                second_pos[seed] = full_pos - half + 1
 
-        if not p_a_data and not p_b_data:
-            continue  # phantom match, skip entirely
-
-        if not p_a_data or not p_b_data:
-            # One slot is a bye
-            p_data = p_a_data or p_b_data
-            p = players.get(p_data["pid"])
-            if p:
+        if verbose:
+            print(
+                f"Winner positions (seeds 1..{num_groups}): "
+                f"{[winner_pos[s] for s in range(1, num_groups + 1)]}"
+            )
+            print(
+                f"Second positions (seeds 1..{num_groups}): "
+                f"{[second_pos[s] for s in range(1, num_groups + 1)]}"
+            )
+            bye_seeds = [s for s in range(num_groups + 1, winner_bracket + 1)]
+            if bye_seeds:
+                bye_w = [winner_pos[s] for s in bye_seeds]
+                bye_s = [second_pos[s] for s in bye_seeds]
                 print(
-                    f"{pos_a:<2}-{pos_b:<2} {p_data['type']:<5} {p['name']:<18} "
-                    f"{p['verein']:<23} vs {'BYE'}"
+                    f"Bye positions (seeds {bye_seeds[0]}..{bye_seeds[-1]}): "
+                    f"winner slots {bye_w}, second slots {bye_s}"
+                )
+
+        # Build position map. Only real groups (seeds 1..num_groups) get players.
+        # Phantom-seed positions stay absent -> byes.
+        position_map = {}  # full-bracket position -> {pid, type, group}
+        for i, g in enumerate(groups, 1):
+            seed = i
+            w_pid = winners[seed - 1] if seed - 1 < len(winners) else "-1"
+            s_pid = seconds[seed - 1] if seed - 1 < len(seconds) else "-1"
+
+            if w_pid and w_pid != "-1" and w_pid in players:
+                position_map[winner_pos[seed]] = {
+                    "pid": w_pid,
+                    "type": f"G{seed}P1",
+                    "group": seed,
+                }
+            if s_pid and s_pid != "-1" and s_pid in players:
+                position_map[second_pos[seed]] = {
+                    "pid": s_pid,
+                    "type": f"G{seed}P2",
+                    "group": seed,
+                }
+
+        print(
+            f"Position map has {len(position_map)} players "
+            f"({num_byes} bye slot(s) left empty)"
+        )
+
+        # Guard against duplicated group data (e.g. the same players recorded
+        # under two separate Gruppen rows for one Klasse, such as a phase-1/
+        # phase-2 pair sharing identical results): if that happens, a player
+        # would be paired against themselves. Skip this Klasse's updates
+        # rather than write a self-match.
+        pid_positions = {}
+        for pos, data in position_map.items():
+            pid_positions.setdefault(data["pid"], []).append(pos)
+        dup_pids = {pid: pl for pid, pl in pid_positions.items() if len(pl) > 1}
+        if dup_pids:
+            for pid, pl in dup_pids.items():
+                name = players.get(pid, {}).get("name", "?")
+                print(
+                    f"  WARNING: player {pid} ({name}) appears at positions {pl} "
+                    f"in this Klasse's group results - source data looks "
+                    f"duplicated, skipping updates for this Klasse"
                 )
             continue
 
-        p_a = players.get(p_a_data["pid"])
-        p_b = players.get(p_b_data["pid"])
-
-        if not p_a or not p_b:
-            continue
-
-        a_designation = p_a_data["type"]
-        b_designation = p_b_data["type"]
-        conflict = " ***" if p_a["verein"] == p_b["verein"] else ""
+        # Print initial pairings before conflict resolution
+        print("\n=== INITIAL KO ROUND 1 PAIRINGS ===\n")
         print(
-            f"{pos_a:<2}-{pos_b:<2} {a_designation:<5} {p_a['name']:<18} {p_a['verein']:<23} vs {b_designation:<5} {p_b['name']:<18} {p_b['verein']:<23}{conflict}"
+            f"{'Match':<5} {'Player A':<24} {'Verein A':<22} {' vs'} {'Player B':<24} {'Verein B':<25}"
         )
-
-    # Check conflicts
-    def check_conflicts(pos_map, bracket_size):
-        conflicts = []
+        print("-" * 100)
         matches = bracket_size // 2
         for i in range(matches):
             pos_a = 2 * i + 1
             pos_b = 2 * i + 2
-            if pos_a in pos_map and pos_b in pos_map:
-                p_a = players.get(pos_map[pos_a]["pid"])
-                p_b = players.get(pos_map[pos_b]["pid"])
-                if p_a and p_b and p_a["verein"] == p_b["verein"]:
-                    conflicts.append(
-                        {
-                            "pos_a": pos_a,
-                            "pos_b": pos_b,
-                            "name_a": p_a["name"],
-                            "name_b": p_b["name"],
-                            "club": p_a["verein"],
-                        }
-                    )
-        return conflicts
 
-    conflicts = check_conflicts(position_map, bracket_size)
-    print(f"\nInitial club conflicts: {len(conflicts)}")
-    if verbose:
-        for c in conflicts:
+            p_a_data = position_map.get(pos_a)
+            p_b_data = position_map.get(pos_b)
+
+            if not p_a_data and not p_b_data:
+                continue  # phantom match, skip entirely
+
+            if not p_a_data or not p_b_data:
+                # One slot is a bye
+                p_data = p_a_data or p_b_data
+                p = players.get(p_data["pid"])
+                if p:
+                    print(
+                        f"{pos_a:<2}-{pos_b:<2} {p_data['type']:<5} {p['name']:<18} "
+                        f"{p['verein']:<23} vs {'BYE'}"
+                    )
+                continue
+
+            p_a = players.get(p_a_data["pid"])
+            p_b = players.get(p_b_data["pid"])
+
+            if not p_a or not p_b:
+                continue
+
+            a_designation = p_a_data["type"]
+            b_designation = p_b_data["type"]
+            conflict = " ***" if p_a["verein"] == p_b["verein"] else ""
             print(
-                f"  Match {c['pos_a']} vs {c['pos_b']}: {c['name_a']} vs {c['name_b']} ({c['club']})"
+                f"{pos_a:<2}-{pos_b:<2} {a_designation:<5} {p_a['name']:<18} {p_a['verein']:<23} vs {b_designation:<5} {p_b['name']:<18} {p_b['verein']:<23}{conflict}"
             )
 
-    # Try to resolve conflicts
-    if conflicts:
-        # Try swapping within same match
-        for c in conflicts:
-            pos_a, pos_b = c["pos_a"], c["pos_b"]
-            # Swap
-            tmp = position_map[pos_a]
-            position_map[pos_a] = position_map[pos_b]
-            position_map[pos_b] = tmp
+        # Check conflicts
+        def check_conflicts(pos_map, bracket_size):
+            conflicts = []
+            matches = bracket_size // 2
+            for i in range(matches):
+                pos_a = 2 * i + 1
+                pos_b = 2 * i + 2
+                if pos_a in pos_map and pos_b in pos_map:
+                    p_a = players.get(pos_map[pos_a]["pid"])
+                    p_b = players.get(pos_map[pos_b]["pid"])
+                    if p_a and p_b and p_a["verein"] == p_b["verein"]:
+                        conflicts.append(
+                            {
+                                "pos_a": pos_a,
+                                "pos_b": pos_b,
+                                "name_a": p_a["name"],
+                                "name_b": p_b["name"],
+                                "club": p_a["verein"],
+                            }
+                        )
+            return conflicts
 
-            new_conflicts = check_conflicts(position_map, bracket_size)
-            if len(new_conflicts) < len(conflicts):
-                conflicts = new_conflicts
-                print(f"Resolved by swapping within match {pos_a}/{pos_b}")
-                break
-            else:
-                # Swap back
+        conflicts = check_conflicts(position_map, bracket_size)
+        print(f"\nInitial club conflicts: {len(conflicts)}")
+        if verbose:
+            for c in conflicts:
+                print(
+                    f"  Match {c['pos_a']} vs {c['pos_b']}: {c['name_a']} vs {c['name_b']} ({c['club']})"
+                )
+
+        # Try to resolve conflicts
+        if conflicts:
+            # Try swapping within same match
+            for c in conflicts:
+                pos_a, pos_b = c["pos_a"], c["pos_b"]
+                # Swap
                 tmp = position_map[pos_a]
                 position_map[pos_a] = position_map[pos_b]
                 position_map[pos_b] = tmp
 
-    print(f"Final club conflicts: {len(conflicts)}")
+                new_conflicts = check_conflicts(position_map, bracket_size)
+                if len(new_conflicts) < len(conflicts):
+                    conflicts = new_conflicts
+                    print(f"Resolved by swapping within match {pos_a}/{pos_b}")
+                    break
+                else:
+                    # Swap back
+                    tmp = position_map[pos_a]
+                    position_map[pos_a] = position_map[pos_b]
+                    position_map[pos_b] = tmp
 
-    # Read Phase 2 games early (for change detection in final pairings)
-    spiele_raw = mdb_export(mdb_file, "tbl_Spiele")
-    phase2_r1 = [
-        r
-        for r in spiele_raw
-        if r.get("tsp_iPhase") == "2" and r.get("tsp_iRunde") == "1"
-    ]
+        print(f"Final club conflicts: {len(conflicts)}")
 
-    # Print final pairings
-    # Build a map of position -> old player ID from original Phase 2 games
-    pos_to_old_player = {}
-    for row in phase2_r1:
-        try:
-            pos_a = int(row.get("tsp_iPosAPlan", 0))
-            pos_b = int(row.get("tsp_iPosBPlan", 0))
-        except (ValueError, TypeError):
-            continue
-        old_a = row.get("tsp_refSpielerA_1")
-        old_b = row.get("tsp_refSpielerB_1")
-        if old_a:
-            pos_to_old_player[pos_a] = old_a
-        if old_b:
-            pos_to_old_player[pos_b] = old_b
+        # Print final pairings
+        # Build a map of position -> old player ID from original Phase 2 games
+        pos_to_old_player = {}
+        for row in phase2_r1:
+            try:
+                pos_a = int(row.get("tsp_iPosAPlan", 0))
+                pos_b = int(row.get("tsp_iPosBPlan", 0))
+            except (ValueError, TypeError):
+                continue
+            old_a = row.get("tsp_refSpielerA_1")
+            old_b = row.get("tsp_refSpielerB_1")
+            if old_a:
+                pos_to_old_player[pos_a] = old_a
+            if old_b:
+                pos_to_old_player[pos_b] = old_b
 
-    # Red color for ANSI
-    RED = "\033[91m"
-    RESET = "\033[0m"
+        # Red color for ANSI
+        RED = "\033[91m"
+        RESET = "\033[0m"
 
-    print("\n=== FINAL KO ROUND 1 PAIRINGS ===\n")
-    print(
-        f"{'Match':<5} {'Player A':<24} {'Verein A':<22} {' vs'} {'Player B':<24} {'Verein B':<25}"
-    )
-    print("-" * 100)
-
-    matches = bracket_size // 2
-    for i in range(matches):
-        pos_a = 2 * i + 1
-        pos_b = 2 * i + 2
-
-        p_a_data = position_map.get(pos_a)
-        p_b_data = position_map.get(pos_b)
-
-        if not p_a_data and not p_b_data:
-            continue  # phantom match
-
-        if not p_a_data or not p_b_data:
-            # One slot is a bye: the present player advances without a match
-            p_data = p_a_data or p_b_data
-            p = players.get(p_data["pid"])
-            if p:
-                print(
-                    f"{pos_a:<2}-{pos_b:<2} {p_data['type']:<5} {p['name']:<18} "
-                    f"{p['verein']:<23} vs {'BYE':<5} (advances to round 2)"
-                )
-            continue
-
-        p_a = players.get(p_a_data["pid"])
-        p_b = players.get(p_b_data["pid"])
-
-        if not p_a or not p_b:
-            continue
-
-        old_a = pos_to_old_player.get(pos_a)
-        old_b = pos_to_old_player.get(pos_b)
-        a_changed = old_a and old_a != p_a_data["pid"]
-        b_changed = old_b and old_b != p_b_data["pid"]
-
-        a_designation = p_a_data["type"]
-        b_designation = p_b_data["type"]
-        a_name = f"{RED}{p_a['name']}{RESET}" if a_changed else p_a["name"]
-        b_name = f"{RED}{p_b['name']}{RESET}" if b_changed else p_b["name"]
-
-        conflict = " ***" if p_a["verein"] == p_b["verein"] else ""
+        print("\n=== FINAL KO ROUND 1 PAIRINGS ===\n")
         print(
-            f"{pos_a:<2}-{pos_b:<2} {a_designation:<5} {a_name:<18} {p_a['verein']:<23} vs {b_designation:<5} {b_name:<18} {p_b['verein']:<23}{conflict}"
+            f"{'Match':<5} {'Player A':<24} {'Verein A':<22} {' vs'} {'Player B':<24} {'Verein B':<25}"
         )
-    print("-" * 95)
+        print("-" * 100)
 
-    if not phase2_r1:
-        print("No Phase 2 Round 1 games found")
-        return
+        matches = bracket_size // 2
+        for i in range(matches):
+            pos_a = 2 * i + 1
+            pos_b = 2 * i + 2
 
-    print(f"\nFound {len(phase2_r1)} Phase 2 Round 1 games")
+            p_a_data = position_map.get(pos_a)
+            p_b_data = position_map.get(pos_b)
 
-    # Generate SQL updates.
-    # Positions absent from position_map are byes: write -1 for that player slot.
-    BYE_ID = "-1"
-    updates = []
-    for row in phase2_r1:
-        try:
-            pos_a = int(row.get("tsp_iPosAPlan", 0))
-            pos_b = int(row.get("tsp_iPosBPlan", 0))
-        except (ValueError, TypeError):
-            continue
+            if not p_a_data and not p_b_data:
+                continue  # phantom match
 
-        new_a = position_map[pos_a]["pid"] if pos_a in position_map else BYE_ID
-        new_b = position_map[pos_b]["pid"] if pos_b in position_map else BYE_ID
+            if not p_a_data or not p_b_data:
+                # One slot is a bye: the present player advances without a match
+                p_data = p_a_data or p_b_data
+                p = players.get(p_data["pid"])
+                if p:
+                    print(
+                        f"{pos_a:<2}-{pos_b:<2} {p_data['type']:<5} {p['name']:<18} "
+                        f"{p['verein']:<23} vs {'BYE':<5} (advances to round 2)"
+                    )
+                continue
 
-        # Skip fully phantom matches (no player on either side and both already -1)
-        if new_a == BYE_ID and new_b == BYE_ID:
-            continue
+            p_a = players.get(p_a_data["pid"])
+            p_b = players.get(p_b_data["pid"])
 
-        old_a = row.get("tsp_refSpielerA_1")
-        old_b = row.get("tsp_refSpielerB_1")
+            if not p_a or not p_b:
+                continue
 
-        if old_a != new_a or old_b != new_b:
-            game_id = row.get("tsp_ID")
-            updates.append(
-                {
-                    "game_id": game_id,
-                    "old_a": old_a,
-                    "old_b": old_b,
-                    "new_a": new_a,
-                    "new_b": new_b,
-                    "pos_a": pos_a,
-                    "pos_b": pos_b,
-                }
+            old_a = pos_to_old_player.get(pos_a)
+            old_b = pos_to_old_player.get(pos_b)
+            a_changed = old_a and old_a != p_a_data["pid"]
+            b_changed = old_b and old_b != p_b_data["pid"]
+
+            a_designation = p_a_data["type"]
+            b_designation = p_b_data["type"]
+            a_name = f"{RED}{p_a['name']}{RESET}" if a_changed else p_a["name"]
+            b_name = f"{RED}{p_b['name']}{RESET}" if b_changed else p_b["name"]
+
+            conflict = " ***" if p_a["verein"] == p_b["verein"] else ""
+            print(
+                f"{pos_a:<2}-{pos_b:<2} {a_designation:<5} {a_name:<18} {p_a['verein']:<23} vs {b_designation:<5} {b_name:<18} {p_b['verein']:<23}{conflict}"
             )
+        print("-" * 95)
 
-    if not updates:
-        print("No changes needed")
+        print(f"\nFound {len(phase2_r1)} Phase 2 Round 1 games")
+
+        # Generate SQL updates.
+        # Positions absent from position_map are byes: write -1 for that player slot.
+        BYE_ID = "-1"
+        for row in phase2_r1:
+            try:
+                pos_a = int(row.get("tsp_iPosAPlan", 0))
+                pos_b = int(row.get("tsp_iPosBPlan", 0))
+            except (ValueError, TypeError):
+                continue
+
+            new_a = position_map[pos_a]["pid"] if pos_a in position_map else BYE_ID
+            new_b = position_map[pos_b]["pid"] if pos_b in position_map else BYE_ID
+
+            # Skip fully phantom matches (no player on either side and both already -1)
+            if new_a == BYE_ID and new_b == BYE_ID:
+                continue
+
+            old_a = row.get("tsp_refSpielerA_1")
+            old_b = row.get("tsp_refSpielerB_1")
+
+            if old_a != new_a or old_b != new_b:
+                game_id = row.get("tsp_ID")
+                all_updates.append(
+                    {
+                        "game_id": game_id,
+                        "old_a": old_a,
+                        "old_b": old_b,
+                        "new_a": new_a,
+                        "new_b": new_b,
+                        "old_a_name": players.get(old_a, {}).get("name", "?"),
+                        "old_b_name": players.get(old_b, {}).get("name", "?"),
+                        "new_a_name": players.get(new_a, {}).get("name", "?"),
+                        "new_b_name": players.get(new_b, {}).get("name", "?"),
+                        "pos_a": pos_a,
+                        "pos_b": pos_b,
+                    }
+                )
+
+    if not all_updates:
+        print("\nNo changes needed")
         return
 
-    print(f"\n{len(updates)} games need updating")
+    print(f"\n{len(all_updates)} games need updating")
 
     if dry_run:
         print("\nDry run - SQL statements:")
-        for u in updates:
+        for u in all_updates:
             print(
                 f"UPDATE tbl_Spiele SET tsp_refSpielerA_1='{u['new_a']}', tsp_refSpielerB_1='{u['new_b']}' WHERE tsp_ID={u['game_id']};"
             )
     else:
         # Write updates using mdb-sql
         print("\nFix the database...")
-        for u in updates:
+        for u in all_updates:
             sql = f"UPDATE tbl_Spiele SET tsp_refSpielerA_1='{u['new_a']}', tsp_refSpielerB_1='{u['new_b']}' WHERE tsp_ID={u['game_id']};\n"
             mdb_sql(mdb_file, sql)
             if verbose:
